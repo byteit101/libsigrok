@@ -27,9 +27,45 @@
 
 #define LOG_PREFIX "tektronix-tds2000b"
 
-struct dev_context {
+
+struct mini_device_spec {
+	const char *model;
+	int channels;
 };
 
-SR_PRIV int tektronix_tds2000b_receive_data(int fd, int revents, void *cb_data);
+#define MAX_ANALOG_CHANNELS 4
+struct dev_context {
+	struct sr_channel_group **analog_groups;
+	struct mini_device_spec *model;
+	gboolean analog_channels[MAX_ANALOG_CHANNELS];
+	float timebase;
+	float vdiv[MAX_ANALOG_CHANNELS];
+	float vert_offset[MAX_ANALOG_CHANNELS];
+	float attenuation[MAX_ANALOG_CHANNELS];
+	char *coupling[MAX_ANALOG_CHANNELS];
+	char *trigger_source;
+
+	uint64_t limit_frames;
+	/* Acquisition settings */
+	GSList *enabled_channels;
+	/* GSList entry for the current channel. */
+	GSList *channel_entry;
+	/* Number of frames received in total. */
+	uint64_t num_frames;
+
+	/* Acq buffers used for reading from the scope and sending data to app. */
+	unsigned char *buffer;
+	int num_block_read;
+};
+
+SR_PRIV int tek_tds2000b_config_set(const struct sr_dev_inst *sdi,
+	const char *format, ...);
+SR_PRIV int tek_tds2000b_capture_start(const struct sr_dev_inst *sdi);
+SR_PRIV int tek_tds2000b_channel_start(const struct sr_dev_inst *sdi);
+SR_PRIV int tek_tds2000b_receive(int fd, int revents, void *cb_data);
+SR_PRIV int tek_tds2000b_get_dev_cfg(const struct sr_dev_inst *sdi);
+SR_PRIV int tek_tds2000b_get_dev_cfg_vertical(const struct sr_dev_inst *sdi);
+SR_PRIV int tek_tds2000b_get_dev_cfg_horizontal(const struct sr_dev_inst *sdi);
+
 
 #endif
