@@ -29,6 +29,51 @@
 #include "scpi.h"
 #include "protocol.h"
 
+
+struct tek_enum_parser {
+	int enum_value;
+	const char* name;
+};
+
+static const struct tek_enum_parser parse_table_data_encoding[] = {
+	{ ENC_ASCII, "ASC" },
+	{ ENC_BINARY, "BIN" },
+	{ 0, NULL}
+};
+static const struct tek_enum_parser parse_table_data_format[] = {
+	{ FMT_RI, "RI" },
+	{ FMT_RP, "RP" },
+	{ 0, NULL}
+};
+static const struct tek_enum_parser parse_table_data_ordering[] = {
+	{ ORDER_LSB, "LSB" },
+	{ ORDER_MSB, "MSB" },
+	{ 0, NULL}
+};
+static const struct tek_enum_parser parse_table_point_format[] = {
+	{ PT_FMT_ENV, "ENV" },
+	{ PT_FMT_Y, "Y" },
+	{ 0, NULL}
+};
+static const struct tek_enum_parser parse_table_xunits[] = {
+	{ XU_SECOND, "s" },
+	{ XU_HZ, "Hz" },
+	{ 0, NULL}
+};
+static const struct tek_enum_parser parse_table_yunits[] = {
+	{ YU_UNKNOWN, "U" },
+	{ YU_UNKNOWN_MASK, "?" },
+	{ YU_VOLTS, "Volts" },
+	{ YU_DECIBELS, "dB" },
+
+	// select models only:
+	{ YU_AMPS, "A" },
+	{ YU_AA, "AA" },
+	{ YU_VA, "VA" },
+	{ YU_VV, "VV" },
+	{ 0, NULL}
+};
+
 static int tek_tds2000b_read_header(struct sr_dev_inst *sdi);
 
 SR_PRIV int tek_tds2000b_receive(int fd, int revents, void *cb_data)
@@ -153,8 +198,8 @@ SR_PRIV int tek_tds2000b_receive(int fd, int revents, void *cb_data)
 				g_array_append_vals(data, devc->buffer, len);
 				float_data = g_array_new(FALSE, FALSE, sizeof(float));
 				for (i = 0; i < len; i++) {
-					voltage = (float)g_array_index(data, int8_t, i) / 8;
-					voltage = ((vdiv * voltage) - offset);
+					voltage = (float)g_array_index(data, int8_t, i) - devc->wavepre.y_off;
+					voltage = ((devc->wavepre.y_mult * voltage) + devc->wavepre.y_zero);
 					g_array_append_val(float_data, voltage);
 				}
 				vdivlog = log10f(vdiv);
@@ -190,6 +235,7 @@ SR_PRIV int tek_tds2000b_receive(int fd, int revents, void *cb_data)
 			}
 
 		if (devc->channel_entry->next) {
+				sr_dbg("Doing another channel");
 			/* We got the frame for this channel, now get the next channel. */
 			devc->channel_entry = devc->channel_entry->next;
 			tek_tds2000b_channel_start(sdi);
@@ -200,6 +246,7 @@ SR_PRIV int tek_tds2000b_receive(int fd, int revents, void *cb_data)
 				/* Last frame, stop capture. */
 				sdi->driver->dev_acquisition_stop(sdi);
 			} else {
+				sr_dbg("Doing another frame");
 				/* Get the next frame, starting with the first channel. */
 				devc->channel_entry = devc->enabled_channels;
 				tek_tds2000b_capture_start(sdi);
@@ -290,17 +337,97 @@ SR_PRIV int tek_tds2000b_capture_start(const struct sr_dev_inst *sdi)
 	return SR_OK;
 }
 
-/* Read the header of a data block. */
-static int tek_tds2000b_read_header(struct sr_dev_inst *sdi)
+static int parse_scpi_int(const char *data, int *out_err, int default_value)
+{
+	int value = default_value;
+	struct sr_rational ret_rational;
+	int ret;
+
+	ret = sr_parse_rational(data, &ret_rational);
+	if (ret == SR_OK && (ret_rational.p % ret_rational.q) == 0) {
+		value = ret_rational.p / ret_rational.q;
+	} else {
+		sr_dbg("get_int: non-integer rational=%" PRId64 "/%" PRIu64,
+			ret_rational.p, ret_rational.q);
+		*out_err = SR_ERR_DATA;
+	}
+
+	return value;
+}
+
+static float parse_scpi_float(const char *data, int *out_err, float default_value)
+{
+	float value = default_value;
+
+	if (sr_atof_ascii(data, &value) != SR_OK)
+		*out_err = SR_ERR_DATA;
+
+	return value;
+}
+
+
+static const char* parse_scpi_string(char *data, int *out_err)
+{
+	return sr_scpi_unquote_string(data);
+}
+
+static int parse_scpi_enum(const char* data, const struct tek_enum_parser* parser_table, int *out_err, int default_value)
+{
+	while (parser_table->name)
+	{
+		// TODO: check if really case insensitive
+		if (g_ascii_strcasecmp(parser_table->name, data) == 0)
+		{
+			return parser_table->enum_value;
+		}
+		parser_table++;
+	}
+	*out_err = SR_ERR_DATA;
+	return default_value;
+}
+
+static const char* render_scpi_enum(int value, const struct tek_enum_parser* parser_table, int *out_err)
+{
+	while (parser_table->name)
+	{
+		// TODO: check if really case insensitive
+		if (value == parser_table->enum_value)
+		{
+			return parser_table->name;
+		}
+		parser_table++;
+	}
+	*out_err = SR_ERR_DATA;
+	return "NULL";
+}
+
+static int tek_tds2000b_parse_header(struct sr_dev_inst *sdi, char* end_buf)
 {
 	struct sr_scpi_dev_inst *scpi = sdi->conn;
 	struct dev_context *devc = sdi->priv;
 	char *buf = (char *)devc->buffer;
-	int ret, desc_length;
-	long data_length = 0;
+	char *fields[17]; // one extra for block ()
+	int i = 0;
+	int ret = SR_OK;
 
-	// header is variable, but at least 100 bytes, and likely no more than 175 bytes
+	sr_dbg("Parsing buffer of size %d", end_buf - buf);
+	sr_dbg("Line as recved as: %.*s", end_buf - buf - 1, buf);
 
+	// Parse in 3 steps:
+	// 1. find all semicolons, and replace with null bytes
+	// 2. Put next char reference into array
+	// 3. Parse each type based on array index
+	fields[i++] = buf;
+	while (buf < end_buf)
+	{
+		if (*buf == ';')
+		{
+			*buf = 0; // turn into list of C strings
+			fields[i++] = buf+1;
+		}
+		buf++;
+	}
+	sr_dbg("Expected 17 indexes, found %d in header", i);
 /*
 BYT_Nr <NR1>;
 BIT_Nr <NR1>;
@@ -320,6 +447,55 @@ YOFF <NR3>;
 YUNit <QString>;
 #..block
 */
+	i = 0;
+	// TODO: assert a few of these values
+	int byte_width = parse_scpi_int(fields[i++], &ret, 1);
+	int bit_width = parse_scpi_int(fields[i++], &ret, 8);
+	enum TEK_DATA_ENCODING encoding = parse_scpi_enum(fields[i++], parse_table_data_encoding, &ret, ENC_ASCII);
+	enum TEK_DATA_FORMAT format = parse_scpi_enum(fields[i++], parse_table_data_format, &ret, FMT_RI);
+	enum TEK_DATA_ORDERING ordering = parse_scpi_enum(fields[i++], parse_table_data_ordering, &ret, ORDER_LSB);
+	devc->wavepre.num_pts = parse_scpi_int(fields[i++], &ret, -1);
+	char* wfid = parse_scpi_string(fields[i++], &ret);
+	enum TEK_POINT_FORMAT pt_format = parse_scpi_enum(fields[i++], parse_table_point_format, &ret, PT_FMT_Y);
+	devc->wavepre.x_incr = parse_scpi_float(fields[i++], &ret, 1);
+	int pt_off = parse_scpi_int(fields[i++], &ret, 0); // always zero, parsed only for completeness
+	devc->wavepre.x_zero = parse_scpi_float(fields[i++], &ret, 0);
+	devc->wavepre.x_unit = parse_scpi_enum(sr_scpi_unquote_string(fields[i++]), parse_table_xunits, &ret, XU_SECOND);
+	devc->wavepre.y_mult = parse_scpi_float(fields[i++], &ret, 0);
+	devc->wavepre.y_zero = parse_scpi_float(fields[i++], &ret, 0);
+	devc->wavepre.y_off = parse_scpi_float(fields[i++], &ret, 0);
+	devc->wavepre.y_unit = parse_scpi_enum(sr_scpi_unquote_string(fields[i++]), parse_table_yunits, &ret, YU_UNKNOWN);
+	//int blocklength = parse_scpi_blockstart(fields[i++], &ret);
+	sr_dbg("Expected 17 indexes, parsed %d in header with %i", i, ret);
+
+	sr_dbg("Line is parsed as: %d;%d;%s;%s;%s;%i;\"%s\";%s;%.2e;%i;%.2e;\"%s\";%.2e;%.2e;%.2e;\"%s\"; ",
+		byte_width, bit_width, 
+		render_scpi_enum(encoding, parse_table_data_encoding, &ret),
+		render_scpi_enum(format, parse_table_data_format, &ret),
+		render_scpi_enum(ordering, parse_table_data_ordering, &ret),
+		devc->wavepre.num_pts,
+		wfid,
+		render_scpi_enum(pt_format, parse_table_point_format, &ret),
+		devc->wavepre.x_incr, pt_off, devc->wavepre.x_zero,
+		render_scpi_enum(devc->wavepre.x_unit, parse_table_xunits, &ret),
+		devc->wavepre.y_mult,devc->wavepre.y_zero, devc->wavepre.y_off,
+		render_scpi_enum(devc->wavepre.y_unit, parse_table_yunits, &ret)
+	);
+	return ret;
+}
+
+/* Read the header of a data block. */
+static int tek_tds2000b_read_header(struct sr_dev_inst *sdi)
+{
+	struct sr_scpi_dev_inst *scpi = sdi->conn;
+	struct dev_context *devc = sdi->priv;
+	char *buf = (char *)devc->buffer;
+	int ret, desc_length;
+	long data_length = 0;
+
+	// header is variable, but at least 100 bytes, and likely no more than 175 bytes
+
+
 
 // 16 args, ignore all for now TODO: !!
 int attempt = 100;
@@ -328,23 +504,28 @@ int found = 0;
 
 	{
 
-	//sr_dbg("Device searching %i semis.", found);
+	sr_dbg("Device searching %i semis.", found);
 	/* Read header from device. */
 	ret = sr_scpi_read_data(scpi, buf, attempt);
 	if (ret < attempt) {
-		sr_err("Read error while reading data header. true");
+		sr_err("Read error while reading data header. true: %i of %i", ret, attempt);
 		return SR_ERR;
 	}
-	//sr_dbg("Device searching et = %d .", ret);
+	sr_dbg("Device searching et = %d .", ret);
 	for (int i = 0; i < ret; i++, buf++){
 		if (*buf == ';')
+		{
 			found++;
+		}
 	}
 	attempt = 16 - found;
 	if (attempt > 1)
 		attempt *=2;
 }
 	sr_dbg("Device returned %i bytes.", ret);
+	//ret = 
+	if (tek_tds2000b_parse_header(sdi, buf+1) != SR_OK)
+		ret = -1;
 	// devc->num_header_bytes += ret;
 	// buf += block_offset; /* Skip to start descriptor block. */
 
@@ -355,7 +536,7 @@ int found = 0;
 	// devc->block_header_size = desc_length + 15;
 	// devc->num_samples = data_length;
 
-	// sr_dbg("Received data block header: '%s' -> block length %d.", buf, ret);
+	// sr_dbg("Received data block header: -> block length %d.", ret);
 
 	return ret;
 }

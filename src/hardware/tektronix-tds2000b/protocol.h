@@ -33,6 +33,69 @@ struct mini_device_spec {
 	int channels;
 };
 
+enum TEK_DATA_ENCODING {
+	ENC_ASCII,
+	ENC_BINARY
+};
+
+enum TEK_DATA_FORMAT {
+	FMT_RI,
+	FMT_RP
+};
+
+enum TEK_DATA_ORDERING {
+	ORDER_LSB,
+	ORDER_MSB
+};
+
+enum TEK_POINT_FORMAT {
+	PT_FMT_ENV,
+	PT_FMT_Y
+};
+
+enum TEK_X_UNITS {
+	XU_SECOND,
+	XU_HZ
+};
+
+enum TEK_Y_UNITS {
+	YU_UNKNOWN,
+	YU_UNKNOWN_MASK,
+	YU_VOLTS,
+	YU_DECIBELS,
+
+	// TBS1000B/EDU, TBS1000, TDS2000C, TDS1000C-EDU, TDS2000B, 
+	// TDS1000B, TPS2000B, and TPS2000 Series only:
+	YU_AMPS,
+	YU_VV,
+	YU_VA,
+	YU_AA
+};
+
+
+struct most_recent_wave_preamble {
+	//For Y format, the time (absolute coordinate) of a point, relative to the trigger, can
+//be calculated using the following formula. N ranges from 0 to 2499.
+//X n = XZEro + XINcr (n - PT_OFf)
+	// double x_mult;
+	// double x_off;
+	float x_zero; // (in xunis)
+	float x_incr; // seconds per point or herts per point
+	enum TEK_X_UNITS x_unit; // s or hz
+
+//value_in_YUNits = ((curve_in_dl - YOFF_in_dl) * YMUlt) + YZERO_in_YUNits
+
+	float y_mult; // (in yunits)
+	float y_off; // (in digitizer levels)
+	float y_zero; // (in yunits)
+	enum TEK_Y_UNITS y_unit; // Volts, U, db, A, VA, AA, VV (semi-conditional)
+
+	int num_pts;
+
+	// char* wfid_description;
+
+};
+
 #define MAX_ANALOG_CHANNELS 4
 struct dev_context {
 	struct sr_channel_group **analog_groups;
@@ -44,6 +107,8 @@ struct dev_context {
 	float attenuation[MAX_ANALOG_CHANNELS];
 	char *coupling[MAX_ANALOG_CHANNELS];
 	char *trigger_source;
+
+	struct most_recent_wave_preamble wavepre;
 
 	uint64_t limit_frames;
 	/* Acquisition settings */

@@ -100,6 +100,7 @@ static const struct mini_device_spec device_models[] = {
 };
 
 static const char *TEKTRONIX = "TEKTRONIX";
+static const char *Tektronix = "Tektronix";
 
 static struct sr_dev_inst *probe_device(struct sr_scpi_dev_inst *scpi)
 {
@@ -146,7 +147,7 @@ static struct sr_dev_inst *probe_device(struct sr_scpi_dev_inst *scpi)
 		goto error;
 
 	sdi = g_malloc0(sizeof(*sdi));
-	sdi->vendor = g_strdup(TEKTRONIX);
+	sdi->vendor = g_strdup(Tektronix);
 	sdi->model = g_strdup(hw_info->model);
 	sdi->version = g_strdup(hw_info->firmware_version);
 	sdi->serial_num = g_strdup(hw_info->serial_number);
