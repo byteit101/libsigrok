@@ -708,3 +708,37 @@ SR_PRIV int tek_tds2000b_get_dev_cfg(const struct sr_dev_inst *sdi)
 
 	return SR_OK;
 }
+
+
+SR_PRIV int tek_tds2000b_get_dev_cfg_horizontal(const struct sr_dev_inst *sdi)
+{
+	struct dev_context *devc;
+	char *cmd;
+	int res;
+	char *sample_points_string;
+	float samplerate_scope, fvalue;
+
+	devc = sdi->priv;
+
+	// all scopes have -5 to +5 hdivs
+	// and -4 to +4 vdivs
+
+
+	/* Get the timebase. */
+	if (sr_scpi_get_float(sdi->conn, "hor:sca?", &devc->timebase) != SR_OK)
+		return SR_ERR;
+
+	int memory_depth;
+
+	if (sr_scpi_get_float(sdi->conn, "hor:reco?", &memory_depth) != SR_OK)
+		return SR_ERR;
+
+	// TODO: check memory_depth == 2500	
+
+	sr_dbg("Current timebase: %g.", devc->timebase);
+	devc->samplerate = 2500.0  / (devc->timebase * 10);
+	sr_dbg("Current samplerate: %0f.", devc->samplerate);
+	sr_dbg("Current memory depth: %" PRIu64 ".", 2500);//devc->memory_depth
+
+	return SR_OK;
+}

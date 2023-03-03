@@ -37,13 +37,13 @@ static const uint32_t drvopts[] = {
 };
 
 static const uint32_t devopts[] = {
-	// SR_CONF_TIMEBASE | SR_CONF_GET | SR_CONF_SET | SR_CONF_LIST,
+	SR_CONF_TIMEBASE | SR_CONF_GET | SR_CONF_SET | SR_CONF_LIST,
 	// SR_CONF_TRIGGER_SOURCE | SR_CONF_GET | SR_CONF_SET | SR_CONF_LIST,
 	// SR_CONF_TRIGGER_SLOPE | SR_CONF_GET | SR_CONF_SET | SR_CONF_LIST,
 	// SR_CONF_TRIGGER_LEVEL | SR_CONF_GET | SR_CONF_SET,
 	// SR_CONF_HORIZ_TRIGGERPOS | SR_CONF_GET | SR_CONF_SET,
-	// SR_CONF_NUM_HDIV | SR_CONF_GET | SR_CONF_LIST,
-	// SR_CONF_SAMPLERATE | SR_CONF_GET,
+	SR_CONF_NUM_HDIV | SR_CONF_GET, // | SR_CONF_LIST,
+	SR_CONF_SAMPLERATE | SR_CONF_GET,
 	SR_CONF_LIMIT_FRAMES | SR_CONF_GET | SR_CONF_SET,
 	// SR_CONF_DATA_SOURCE | SR_CONF_GET | SR_CONF_SET | SR_CONF_LIST,
 	// SR_CONF_AVERAGING | SR_CONF_GET | SR_CONF_SET,
@@ -53,7 +53,6 @@ static const uint32_t devopts[] = {
 static const uint32_t devopts_cg_analog[] = {
 	SR_CONF_NUM_VDIV | SR_CONF_GET,
 	SR_CONF_VDIV | SR_CONF_GET | SR_CONF_SET | SR_CONF_LIST,
-	// SR_CONF_TIMEBASE | SR_CONF_GET | SR_CONF_SET | SR_CONF_LIST,
 	SR_CONF_COUPLING | SR_CONF_GET | SR_CONF_SET | SR_CONF_LIST,
 	SR_CONF_PROBE_FACTOR | SR_CONF_GET | SR_CONF_SET | SR_CONF_LIST,
 	// SR_CONF_DATA_SOURCE | SR_CONF_GET | SR_CONF_SET | SR_CONF_LIST,
@@ -75,6 +74,49 @@ static const uint64_t vdivs[][2] = {
 	{ 1, 1 },
 	{ 2, 1 },
 	{ 5, 1 },
+};
+
+// TODO: fixup per model
+#define timebase_nums 34
+static const uint64_t timebases[][2] = {
+	/* nanoseconds */
+	{ 1, 1000000000 },
+	{ 25, 10000000000 },
+	{ 5, 1000000000 },
+	{ 10, 1000000000 },
+	{ 25, 1000000000 },
+	{ 50, 1000000000 },
+	{ 100, 1000000000 },
+	{ 250, 1000000000 },
+	{ 500, 1000000000 },
+	/* microseconds */
+	{ 1, 1000000 },
+	{ 25, 10000000 },
+	{ 5, 1000000 },
+	{ 10, 1000000 },
+	{ 25, 1000000 },
+	{ 50, 1000000 },
+	{ 100, 1000000 },
+	{ 250, 1000000 },
+	{ 500, 1000000 },
+	/* milliseconds */
+	{ 1, 1000 },
+	{ 25, 10000 },
+	{ 5, 1000 },
+	{ 10, 1000 },
+	{ 25, 1000 },
+	{ 50, 1000 },
+	{ 100, 1000 },
+	{ 250, 1000 },
+	{ 500, 1000 },
+	/* seconds */
+	{ 1, 1 },
+	{ 25, 10 },
+	{ 5, 1 },
+	{ 10, 1 },
+	{ 25, 1 },
+	{ 50, 1 },
+	{ 100, 1 },
 };
 
 static const char *coupling[] = {
@@ -248,9 +290,9 @@ static int config_get(uint32_t key, GVariant **data,
 	}
 
 	switch (key) {
-	// case SR_CONF_NUM_HDIV:
-	// 	*data = g_variant_new_int32(devc->model->series->num_horizontal_divs);
-	// 	break;
+	case SR_CONF_NUM_HDIV:
+		*data = g_variant_new_int32(8);
+		break;
 	case SR_CONF_NUM_VDIV:
 		*data = g_variant_new_int32(vdiv_nums);
 		break;
@@ -263,10 +305,10 @@ static int config_get(uint32_t key, GVariant **data,
 	// 	else if (devc->data_source == DATA_SOURCE_HISTORY)
 	// 		*data = g_variant_new_string("History");
 	// 	break;
-	// case SR_CONF_SAMPLERATE:
-	// 	tek_tds2000b_get_dev_cfg_horizontal(sdi);
-	// 	*data = g_variant_new_uint64(devc->samplerate);
-	// 	break;
+	case SR_CONF_SAMPLERATE:
+		tek_tds2000b_get_dev_cfg_horizontal(sdi);
+		*data = g_variant_new_uint64(devc->samplerate);
+		break;
 	// case SR_CONF_TRIGGER_SOURCE:
 	// 	if (!strcmp(devc->trigger_source, "ACL"))
 	// 		tmp_str = "AC Line";
@@ -295,24 +337,24 @@ static int config_get(uint32_t key, GVariant **data,
 	// case SR_CONF_HORIZ_TRIGGERPOS:
 	// 	*data = g_variant_new_double(devc->horiz_triggerpos);
 	// 	break;
-	// case SR_CONF_TIMEBASE:
-	// 	for (i = 0; i < devc->num_timebases; i++) {
-	// 		float tb, diff;
+	case SR_CONF_TIMEBASE:
+		for (i = 0; i < timebase_nums; i++) {
+			float tb, diff;
 
-	// 		tb = (float)devc->timebases[i][0] / devc->timebases[i][1];
-	// 		diff = fabs(devc->timebase - tb);
-	// 		if (diff < smallest_diff) {
-	// 			smallest_diff = diff;
-	// 			idx = i;
-	// 		}
-	// 	}
-	// 	if (idx < 0) {
-	// 		sr_dbg("Negative timebase index: %d.", idx);
-	// 		return SR_ERR_NA;
-	// 	}
-	// 	*data = g_variant_new("(tt)", devc->timebases[idx][0],
-	// 		devc->timebases[idx][1]);
-		// break;
+			tb = (float)timebases[i][0] / timebases[i][1];
+			diff = fabs(devc->timebase - tb);
+			if (diff < smallest_diff) {
+				smallest_diff = diff;
+				idx = i;
+			}
+		}
+		if (idx < 0) {
+			sr_dbg("Negative timebase index: %d.", idx);
+			return SR_ERR_NA;
+		}
+		*data = g_variant_new("(tt)", timebases[idx][0],
+			timebases[idx][1]);
+		break;
 	case SR_CONF_VDIV:
 		if (analog_channel < 0) {
 			sr_dbg("Negative analog channel: %d.", analog_channel);
@@ -384,7 +426,7 @@ static int config_set(uint32_t key, GVariant *data,
 	switch (key) {
 	case SR_CONF_LIMIT_FRAMES:
 		devc->limit_frames = g_variant_get_uint64(data);
-		sr_info("Getting frames limit of %l",  g_variant_get_uint64(data));
+		sr_info("Getting frames limit of %li",  g_variant_get_uint64(data));
 		break;
 	// case SR_CONF_TRIGGER_SLOPE:
 	// 	if ((idx = std_str_idx(data, ARRAY_AND_SIZE(trigger_slopes))) < 0)
@@ -412,28 +454,12 @@ static int config_set(uint32_t key, GVariant *data,
 	// 	if (ret == SR_OK)
 	// 		devc->trigger_level = t_dbl;
 	// 	break;
-	// case SR_CONF_TIMEBASE:
-	// 	if ((idx = std_u64_tuple_idx(data, devc->timebases, devc->num_timebases)) < 0)
-	// 		return SR_ERR_ARG;
-	// 	devc->timebase = (float)devc->timebases[idx][0] / devc->timebases[idx][1];
-	// 	p = devc->timebases[idx][0];
-	// 	switch (devc->timebases[idx][1]) {
-	// 	case 1:
-	// 		cmd = g_strdup_printf("%" PRIu64 "S", p);
-	// 		break;
-	// 	case 1000:
-	// 		cmd = g_strdup_printf("%" PRIu64 "MS", p);
-	// 		break;
-	// 	case 1000000:
-	// 		cmd = g_strdup_printf("%" PRIu64 "US", p);
-	// 		break;
-	// 	case 1000000000:
-	// 		cmd = g_strdup_printf("%" PRIu64 "NS", p);
-	// 		break;
-	// 	}
-	// 	ret = tek_tds2000b_config_set(sdi, "TDIV %s", cmd);
-	// 	g_free(cmd);
-	// 	return ret;
+	case SR_CONF_TIMEBASE:
+		if ((idx = std_u64_tuple_idx(data, timebases, timebase_nums)) < 0)
+			return SR_ERR_ARG;
+		devc->timebase = (float)timebases[idx][0] / timebases[idx][1];
+		ret = tek_tds2000b_config_set(sdi, "hor:sca %.1e", devc->timebase);
+		return ret;
 	// case SR_CONF_TRIGGER_SOURCE:
 	// 	if ((idx = std_str_idx(data, ARRAY_AND_SIZE(trigger_sources))) < 0)
 	// 		return SR_ERR_ARG;
@@ -504,9 +530,10 @@ static int config_set(uint32_t key, GVariant *data,
 	// 	}
 	// 	break;
 	// case SR_CONF_SAMPLERATE:
-	// 	tek_tds2000b_get_dev_cfg_horizontal(sdi);
-	// 	data = g_variant_new_uint64(devc->samplerate);
-	// 	break;
+		// ret = tek_tds2000b_config_set(sdi, "HOR:SCA %" PRIu64, g_variant_get_uint64(data));
+		// if (ret == SR_OK)
+			// tek_tds2000b_get_dev_cfg_horizontal(sdi);
+		// return ret;
 	// case SR_CONF_AVERAGING:
 	// 	devc->average_enabled = g_variant_get_boolean(data);
 	// 	sr_dbg("%s averaging", devc->average_enabled ? "Enabling" : "Disabling");
@@ -559,14 +586,12 @@ static int config_list(uint32_t key, GVariant **data,
 			return SR_ERR_CHANNEL_GROUP;
 		*data = std_gvar_tuple_array(vdivs, vdiv_nums);
 		break;
-	// case SR_CONF_TIMEBASE:
-	// 	if (!devc)
-	// 		/* Can't know this until we have the exact model. */
-	// 		return SR_ERR_ARG;
-	// 	if (devc->num_timebases <= 0)
-	// 		return SR_ERR_NA;
-	// 	*data = std_gvar_tuple_array(devc->timebases, devc->num_timebases);
-	// 	break;
+	case SR_CONF_TIMEBASE:
+		if (!devc)
+			/* Can't know this until we have the exact model. */
+			return SR_ERR_ARG;
+		*data = std_gvar_tuple_array(timebases, timebase_nums);
+		break;
 	// case SR_CONF_TRIGGER_SOURCE:
 	// 	if (!devc)
 	// 		/* Can't know this until we have the exact model. */
@@ -594,6 +619,9 @@ static int config_list(uint32_t key, GVariant **data,
 	// 	break;
 	case SR_CONF_NUM_HDIV:
 		*data = g_variant_new_int32(10);//devc->model->series->num_horizontal_divs);
+		break;
+	case SR_CONF_NUM_VDIV:
+		*data = g_variant_new_int32(8);//devc->model->series->num_horizontal_divs);
 		break;
 	// case SR_CONF_AVG_SAMPLES:
 	// 	*data = std_gvar_array_u64(ARRAY_AND_SIZE(averages));
@@ -634,7 +662,7 @@ static int dev_acquisition_start(const struct sr_dev_inst *sdi)
 		return SR_ERR;
 
 	
-	// tek_tds2000b_get_dev_cfg_horizontal(sdi); // TODO:!
+	tek_tds2000b_get_dev_cfg_horizontal(sdi); // TODO:!
 
 	if (tek_tds2000b_config_set(sdi, "ACQ:STATE RUN") != SR_OK)
 		return SR_ERR;

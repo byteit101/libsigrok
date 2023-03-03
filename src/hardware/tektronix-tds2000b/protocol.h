@@ -102,6 +102,7 @@ struct dev_context {
 	struct mini_device_spec *model;
 	gboolean analog_channels[MAX_ANALOG_CHANNELS];
 	float timebase;
+	float samplerate;
 	float vdiv[MAX_ANALOG_CHANNELS];
 	float vert_offset[MAX_ANALOG_CHANNELS];
 	float attenuation[MAX_ANALOG_CHANNELS];
