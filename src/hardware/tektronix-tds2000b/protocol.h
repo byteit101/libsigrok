@@ -108,6 +108,9 @@ struct dev_context {
 	float attenuation[MAX_ANALOG_CHANNELS];
 	char *coupling[MAX_ANALOG_CHANNELS];
 	char *trigger_source;
+	float horiz_triggerpos;
+	char *trigger_slope;
+	float trigger_level;
 
 	struct most_recent_wave_preamble wavepre;
 

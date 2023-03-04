@@ -639,6 +639,10 @@ SR_PRIV int tek_tds2000b_get_dev_cfg(const struct sr_dev_inst *sdi)
 	if (tek_tds2000b_get_dev_cfg_vertical(sdi) != SR_OK)
 		return SR_ERR;
 
+
+	if (tek_tds2000b_get_dev_cfg_horizontal(sdi) != SR_OK)
+		return SR_ERR;
+
 	/* Coupling. */
 	for (i = 0; i < devc->model->channels; i++) {
 		cmd = g_strdup_printf("CH%d:COUP?", i + 1);
@@ -658,53 +662,33 @@ SR_PRIV int tek_tds2000b_get_dev_cfg(const struct sr_dev_inst *sdi)
 	response = NULL;
 	tokens = NULL;
 	g_free(devc->trigger_source);
-	if (sr_scpi_get_string(sdi->conn, "TRIG:MAI:TYP?", &devc->trigger_source) != SR_OK)
+	if (sr_scpi_get_string(sdi->conn, "TRIG:MAI:edge:sou?", &devc->trigger_source) != SR_OK)
 		return SR_ERR;
 	sr_dbg("Current trigger source: %s.", devc->trigger_source);
 
-	// /* TODO: Horizontal trigger position. */
-	// response = "";
-	// trigger_pos = 0;
-	// // if (sr_scpi_get_string(sdi->conn, g_strdup_printf("%s:TRDL?", devc->trigger_source), &response) != SR_OK)
-	// // 	return SR_ERR;
-	// // len = strlen(response);
-	// len = strlen(tokens[4]);
-	// if (!g_ascii_strcasecmp(tokens[4] + (len - 2), "us")) {
-	// 	trigger_pos = atof(tokens[4]) / SR_GHZ(1);
-	// 	sr_dbg("Current trigger position us %s.", tokens[4] );
-	// } else if (!g_ascii_strcasecmp(tokens[4] + (len - 2), "ns")) {
-	// 	trigger_pos = atof(tokens[4]) / SR_MHZ(1);
-	// 	sr_dbg("Current trigger position ms %s.", tokens[4] );
-	// } else if (!g_ascii_strcasecmp(tokens[4] + (len - 2), "ms")) {
-	// 	trigger_pos = atof(tokens[4]) / SR_KHZ(1);
-	// 	sr_dbg("Current trigger position ns %s.", tokens[4] );
-	// } else if (!g_ascii_strcasecmp(tokens[4] + (len - 2), "s")) {
-	// 	trigger_pos = atof(tokens[4]);
-	// 	sr_dbg("Current trigger position s %s.", tokens[4] );
-	// };
-	// devc->horiz_triggerpos = trigger_pos;
+	/* Horizontal trigger position. */
+	if (sr_scpi_get_string(sdi->conn, "hor:pos?", &devc->horiz_triggerpos) != SR_OK)
+		return SR_ERR;
+	
+	// triggerpos is in timeunits, convert back to percentage
+	devc->horiz_triggerpos = (-devc->horiz_triggerpos / (devc->timebase * 10)) + 0.5;
+		// t_dbl = -(devc->horiz_triggerpos - 0.5) * devc->timebase * devc->num_timebases;
 
-	// sr_dbg("Current horizontal trigger position %.10f.", devc->horiz_triggerpos);
+	sr_dbg("Current horizontal trigger position %.10f.", devc->horiz_triggerpos);
 
-	// /* Trigger slope. */
-	// cmd = g_strdup_printf("%s:TRSL?", devc->trigger_source);
-	// g_free(devc->trigger_slope);
-	// devc->trigger_slope = NULL;
-	// res = sr_scpi_get_string(sdi->conn, cmd, &devc->trigger_slope);
-	// g_free(cmd);
-	// if (res != SR_OK)
-	// 	return SR_ERR;
-	// sr_dbg("Current trigger slope: %s.", devc->trigger_slope);
+	/* Trigger slope. */
+	g_free(devc->trigger_slope);
+	devc->trigger_slope = NULL;
+	res = sr_scpi_get_string(sdi->conn, "trig:mai:edge:slope?", &devc->trigger_slope);
+	if (res != SR_OK)
+		return SR_ERR;
+	sr_dbg("Current trigger slope: %s.", devc->trigger_slope);
 
-	// /* Trigger level, only when analog channel. */
-	// if (g_str_has_prefix(tokens[2], "C")) {
-	// 	cmd = g_strdup_printf("%s:TRLV?", devc->trigger_source);
-	// 	res = sr_scpi_get_float(sdi->conn, cmd, &devc->trigger_level);
-	// 	g_free(cmd);
-	// 	if (res != SR_OK)
-	// 		return SR_ERR;
-	// 	sr_dbg("Current trigger level: %g.", devc->trigger_level);
-	// }
+	/* Trigger level. */
+	res = sr_scpi_get_float(sdi->conn, "trig:mai:lev?", &devc->trigger_level);
+	if (res != SR_OK)
+		return SR_ERR;
+	sr_dbg("Current trigger level: %g.", devc->trigger_level);
 
 	return SR_OK;
 }

@@ -38,10 +38,10 @@ static const uint32_t drvopts[] = {
 
 static const uint32_t devopts[] = {
 	SR_CONF_TIMEBASE | SR_CONF_GET | SR_CONF_SET | SR_CONF_LIST,
-	// SR_CONF_TRIGGER_SOURCE | SR_CONF_GET | SR_CONF_SET | SR_CONF_LIST,
-	// SR_CONF_TRIGGER_SLOPE | SR_CONF_GET | SR_CONF_SET | SR_CONF_LIST,
-	// SR_CONF_TRIGGER_LEVEL | SR_CONF_GET | SR_CONF_SET,
-	// SR_CONF_HORIZ_TRIGGERPOS | SR_CONF_GET | SR_CONF_SET,
+	SR_CONF_TRIGGER_SOURCE | SR_CONF_GET | SR_CONF_SET | SR_CONF_LIST,
+	SR_CONF_TRIGGER_SLOPE | SR_CONF_GET | SR_CONF_SET | SR_CONF_LIST,
+	SR_CONF_TRIGGER_LEVEL | SR_CONF_GET | SR_CONF_SET,
+	SR_CONF_HORIZ_TRIGGERPOS | SR_CONF_GET | SR_CONF_SET,
 	SR_CONF_NUM_HDIV | SR_CONF_GET, // | SR_CONF_LIST,
 	SR_CONF_SAMPLERATE | SR_CONF_GET,
 	SR_CONF_LIMIT_FRAMES | SR_CONF_GET | SR_CONF_SET,
@@ -77,10 +77,9 @@ static const uint64_t vdivs[][2] = {
 };
 
 // TODO: fixup per model
-#define timebase_nums 34
+#define timebase_nums 32
 static const uint64_t timebases[][2] = {
 	/* nanoseconds */
-	{ 1, 1000000000 },
 	{ 25, 10000000000 },
 	{ 5, 1000000000 },
 	{ 10, 1000000000 },
@@ -116,7 +115,6 @@ static const uint64_t timebases[][2] = {
 	{ 10, 1 },
 	{ 25, 1 },
 	{ 50, 1 },
-	{ 100, 1 },
 };
 
 static const char *coupling[] = {
@@ -130,6 +128,17 @@ static const uint64_t probe_factor[] = {
 	1, 2, 5, 10, 50, 100, 1000
 };
 
+static const char *trigger_slopes[] = {
+	"r", "f",
+};
+
+
+// TODO: 2 vs 4 ch
+static const char *trigger_sources[] = {
+	"CH1", "CH2", 
+	"CH3", "CH4",
+	"Ext", "Ext /5", "Ext /10", "AC Line",
+};
 
 
 static const struct mini_device_spec device_models[] = {
@@ -309,34 +318,26 @@ static int config_get(uint32_t key, GVariant **data,
 		tek_tds2000b_get_dev_cfg_horizontal(sdi);
 		*data = g_variant_new_uint64(devc->samplerate);
 		break;
-	// case SR_CONF_TRIGGER_SOURCE:
-	// 	if (!strcmp(devc->trigger_source, "ACL"))
-	// 		tmp_str = "AC Line";
-	// 	else if (!strcmp(devc->trigger_source, "CHAN1"))
-	// 		tmp_str = "CH1";
-	// 	else if (!strcmp(devc->trigger_source, "CHAN2"))
-	// 		tmp_str = "CH2";
-	// 	else
-	// 		tmp_str = devc->trigger_source;
-	// 	*data = g_variant_new_string(tmp_str);
-	// 	break;
-	// case SR_CONF_TRIGGER_SLOPE:
-	// 	if (!strncmp(devc->trigger_slope, "POS", 3)) {
-	// 		tmp_str = "r";
-	// 	} else if (!strncmp(devc->trigger_slope, "NEG", 3)) {
-	// 		tmp_str = "f";
-	// 	} else {
-	// 		sr_dbg("Unknown trigger slope: '%s'.", devc->trigger_slope);
-	// 		return SR_ERR_NA;
-	// 	}
-	// 	*data = g_variant_new_string(tmp_str);
-	// 	break;
-	// case SR_CONF_TRIGGER_LEVEL:
-	// 	*data = g_variant_new_double(devc->trigger_level);
-	// 	break;
-	// case SR_CONF_HORIZ_TRIGGERPOS:
-	// 	*data = g_variant_new_double(devc->horiz_triggerpos);
-	// 	break;
+	case SR_CONF_TRIGGER_SOURCE:
+		*data = g_variant_new_string(devc->trigger_source);
+		break;
+	case SR_CONF_TRIGGER_SLOPE:
+		if (!g_ascii_strncasecmp(devc->trigger_slope, "RISE", 4)) {
+			tmp_str = "r";
+		} else if (!g_ascii_strncasecmp(devc->trigger_slope, "FALL", 4)) {
+			tmp_str = "f";
+		} else {
+			sr_dbg("Unknown trigger slope: '%s'.", devc->trigger_slope);
+			return SR_ERR_NA;
+		}
+		*data = g_variant_new_string(tmp_str);
+		break;
+	case SR_CONF_TRIGGER_LEVEL:
+		*data = g_variant_new_double(devc->trigger_level);
+		break;
+	case SR_CONF_HORIZ_TRIGGERPOS:
+		*data = g_variant_new_double(devc->horiz_triggerpos);
+		break;
 	case SR_CONF_TIMEBASE:
 		for (i = 0; i < timebase_nums; i++) {
 			float tb, diff;
@@ -428,60 +429,62 @@ static int config_set(uint32_t key, GVariant *data,
 		devc->limit_frames = g_variant_get_uint64(data);
 		sr_info("Getting frames limit of %li",  g_variant_get_uint64(data));
 		break;
-	// case SR_CONF_TRIGGER_SLOPE:
-	// 	if ((idx = std_str_idx(data, ARRAY_AND_SIZE(trigger_slopes))) < 0)
-	// 		return SR_ERR_ARG;
-	// 	g_free(devc->trigger_slope);
-	// 	devc->trigger_slope = g_strdup((trigger_slopes[idx][0] == 'r') ? "POS" : "NEG");
-	// 	return tek_tds2000b_config_set(sdi, "%s:TRSL %s",
-	// 		devc->trigger_source, devc->trigger_slope);
-	// case SR_CONF_HORIZ_TRIGGERPOS:
-	// 	t_dbl = g_variant_get_double(data);
-	// 	if (t_dbl < 0.0 || t_dbl > 1.0) {
-	// 		sr_err("Invalid horiz. trigger position: %g.", t_dbl);
-	// 		return SR_ERR;
-	// 	}
-	// 	devc->horiz_triggerpos = t_dbl;
-	// 	/* We have the trigger offset as a percentage of the frame, but
-	// 	 * need to express this in seconds. */
-	// 	t_dbl = -(devc->horiz_triggerpos - 0.5) * devc->timebase * devc->num_timebases;
-	// 	g_ascii_formatd(buffer, sizeof(buffer), "%.6f", t_dbl);
-	// 	return tek_tds2000b_config_set(sdi, ":TIM:OFFS %s", buffer);
-	// case SR_CONF_TRIGGER_LEVEL:
-	// 	t_dbl = g_variant_get_double(data);
-	// 	g_ascii_formatd(buffer, sizeof(buffer), "%.3f", t_dbl);
-	// 	ret = tek_tds2000b_config_set(sdi, ":TRIG:EDGE:LEV %s", buffer);
-	// 	if (ret == SR_OK)
-	// 		devc->trigger_level = t_dbl;
-	// 	break;
+	case SR_CONF_TRIGGER_SLOPE:
+		if ((idx = std_str_idx(data, ARRAY_AND_SIZE(trigger_slopes))) < 0)
+			return SR_ERR_ARG;
+		g_free(devc->trigger_slope);
+		devc->trigger_slope = g_strdup((trigger_slopes[idx][0] == 'r') ? "RISE" : "FALL");
+		return tek_tds2000b_config_set(sdi, "TRIG:MAI:EDGE:SLO %s", devc->trigger_slope);
+	case SR_CONF_HORIZ_TRIGGERPOS:
+		t_dbl = g_variant_get_double(data);
+		if (t_dbl < 0.0 || t_dbl > 1.0) {
+			sr_err("Invalid horiz. trigger position: %g.", t_dbl);
+			return SR_ERR;
+		}
+		devc->horiz_triggerpos = t_dbl;
+		/* We have the trigger offset as a percentage of the frame, but
+		 * need to express this in seconds. */
+		t_dbl = -(devc->horiz_triggerpos - 0.5) * devc->timebase * (10);//devc->num_timebases;
+		// g_ascii_formatd(buffer, sizeof(buffer), "%.6f", t_dbl);
+		return tek_tds2000b_config_set(sdi, "hor:mai:pos %.3e", t_dbl);
+	case SR_CONF_TRIGGER_LEVEL:
+		if (!strcmp(devc->trigger_source, "AC Line"))
+			sr_err("Can't set level on AC line trigger, ignoring");
+			return SR_ERR;
+
+		t_dbl = g_variant_get_double(data);
+		g_ascii_formatd(buffer, sizeof(buffer), "%.3f", t_dbl);
+		ret = tek_tds2000b_config_set(sdi, "TRIG:MAI:LEV %s", buffer);
+		if (ret == SR_OK)
+			devc->trigger_level = t_dbl;
+		break;
 	case SR_CONF_TIMEBASE:
 		if ((idx = std_u64_tuple_idx(data, timebases, timebase_nums)) < 0)
 			return SR_ERR_ARG;
 		devc->timebase = (float)timebases[idx][0] / timebases[idx][1];
 		ret = tek_tds2000b_config_set(sdi, "hor:sca %.1e", devc->timebase);
+		if (ret == SR_OK)
+			tek_tds2000b_get_dev_cfg_horizontal(sdi);
 		return ret;
-	// case SR_CONF_TRIGGER_SOURCE:
-	// 	if ((idx = std_str_idx(data, ARRAY_AND_SIZE(trigger_sources))) < 0)
-	// 		return SR_ERR_ARG;
-	// 	g_free(devc->trigger_source);
-	// 	devc->trigger_source = g_strdup(trigger_sources[idx]);
-	// 	if (!strcmp(devc->trigger_source, "AC Line"))
-	// 		tmp_str = "LINE";
-	// 	else if (!strcmp(devc->trigger_source, "CH1"))
-	// 		tmp_str = "C1";
-	// 	else if (!strcmp(devc->trigger_source, "CH2"))
-	// 		tmp_str = "C2";
-	// 	else if (!strcmp(devc->trigger_source, "CH3"))
-	// 		tmp_str = "C3";
-	// 	else if (!strcmp(devc->trigger_source, "CH4"))
-	// 		tmp_str = "C4";
-	// 	else if (!strcmp(devc->trigger_source, "Ext"))
-	// 		tmp_str = "EX";
-	// 	else if (!strcmp(devc->trigger_source, "Ext /5"))
-	// 		tmp_str = "EX5";
-	// 	else
-	// 		tmp_str = (char *)devc->trigger_source;
-	// 	return tek_tds2000b_config_set(sdi, "TRSE EDGE,SR,%s,OFF", tmp_str);
+	case SR_CONF_TRIGGER_SOURCE:
+		if ((idx = std_str_idx(data, ARRAY_AND_SIZE(trigger_sources))) < 0)
+			return SR_ERR_ARG;
+		g_free(devc->trigger_source);
+		devc->trigger_source = g_strdup(trigger_sources[idx]);
+		if (!strcmp(devc->trigger_source, "AC Line"))
+		{
+			// ONLY set edge trigger, as only edge trigger supports this
+			// TODO: raise error when not edge source	
+			return tek_tds2000b_config_set(sdi, "TRIG:mai:edge:sou line");
+		}
+		else if (!strcmp(devc->trigger_source, "Ext /5"))
+			tmp_str = "EXT5";
+		else if (!strcmp(devc->trigger_source, "Ext /10"))
+			tmp_str = "EXT10";
+		else
+			tmp_str = (char *)devc->trigger_source;
+			// TODO: pulse and video
+		return tek_tds2000b_config_set(sdi, "TRIG:mai:edge:sou %s", tmp_str);
 	case SR_CONF_VDIV:
 		if (!cg)
 			return SR_ERR_CHANNEL_GROUP;
@@ -592,16 +595,17 @@ static int config_list(uint32_t key, GVariant **data,
 			return SR_ERR_ARG;
 		*data = std_gvar_tuple_array(timebases, timebase_nums);
 		break;
-	// case SR_CONF_TRIGGER_SOURCE:
-	// 	if (!devc)
-	// 		/* Can't know this until we have the exact model. */
-	// 		return SR_ERR_ARG;
-	// 	*data = g_variant_new_strv(trigger_sources,
-	// 		devc->model->has_digital ? ARRAY_SIZE(trigger_sources) : 5);
-	// 	break;
-	// case SR_CONF_TRIGGER_SLOPE:
-	// 	*data = g_variant_new_strv(ARRAY_AND_SIZE(trigger_slopes));
-	// 	break;
+	case SR_CONF_TRIGGER_SOURCE:
+		// if (!devc)
+		// 	/* Can't know this until we have the exact model. */
+		// 	return SR_ERR_ARG;
+		// *data = g_variant_new_strv(trigger_sources,
+		// 	devc->model->has_digital ? ARRAY_SIZE(trigger_sources) : 5);
+		*data = g_variant_new_strv(ARRAY_AND_SIZE(trigger_sources));
+		break;
+	case SR_CONF_TRIGGER_SLOPE:
+		*data = g_variant_new_strv(ARRAY_AND_SIZE(trigger_slopes));
+		break;
 	// case SR_CONF_DATA_SOURCE:
 	// 	if (!devc)
 	// 		/* Can't know this until we have the exact model. */
