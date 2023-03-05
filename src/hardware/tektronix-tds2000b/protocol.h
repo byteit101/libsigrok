@@ -28,10 +28,49 @@
 #define LOG_PREFIX "tektronix-tds2000b"
 
 
+enum bandwidth {
+	BW_25MHz = 25,
+	BW_30MHz = 30,
+	BW_40MHz = 40,
+	BW_45MHz = 45,
+	BW_50MHz = 50,
+	BW_60MHz = 60,
+	BW_70MHz = 70,
+	BW_100MHz = 100,
+	BW_150MHz = 150,
+	BW_200MHz = 200,
+};
+enum samplerate {
+	SA_500M = 500,
+	SA_1G = 1000,
+	SA_2G = 2000,
+};
+
 struct mini_device_spec {
 	const char *model;
 	int channels;
+	
+	enum samplerate sample_rate;
+	enum bandwidth bandwidth;
+	
+	const uint64_t *probe_factors;
+	int num_probe_factors;
+
+	int timebase_start;
+	int timebase_stop;
+
+	int voltrange_start;
+	int voltrange_stop;
+
+	const char** trigger_sources;
+	int num_trigger_sources;
 };
+
+/* Values that are the same for all models */
+#define TEK_BUFFER_SIZE 2500
+#define TEK_NUM_HDIV 10
+#define TEK_NUM_VDIV 8
+
 
 enum TEK_DATA_ENCODING {
 	ENC_ASCII,
@@ -99,7 +138,8 @@ struct most_recent_wave_preamble {
 #define MAX_ANALOG_CHANNELS 4
 struct dev_context {
 	struct sr_channel_group **analog_groups;
-	struct mini_device_spec *model;
+	const struct mini_device_spec *model;
+
 	gboolean analog_channels[MAX_ANALOG_CHANNELS];
 	float timebase;
 	float samplerate;
@@ -111,6 +151,8 @@ struct dev_context {
 	float horiz_triggerpos;
 	char *trigger_slope;
 	float trigger_level;
+	int average_samples;
+	gboolean average_enabled;
 
 	struct most_recent_wave_preamble wavepre;
 

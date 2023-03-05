@@ -78,7 +78,7 @@ static int tek_tds2000b_read_header(struct sr_dev_inst *sdi);
 
 SR_PRIV int tek_tds2000b_receive(int fd, int revents, void *cb_data)
 {
-	const struct sr_dev_inst *sdi;
+	struct sr_dev_inst *sdi;
 	struct dev_context *devc;
 
 	struct sr_scpi_dev_inst *scpi;
@@ -87,11 +87,9 @@ SR_PRIV int tek_tds2000b_receive(int fd, int revents, void *cb_data)
 	struct sr_analog_encoding encoding;
 	struct sr_analog_meaning meaning;
 	struct sr_analog_spec spec;
-	struct sr_datafeed_logic logic;
 	struct sr_channel *ch;
 	int len, i;
 	float wait;
-	gboolean read_complete = FALSE;
 
 	(void)fd;
 
@@ -148,7 +146,7 @@ SR_PRIV int tek_tds2000b_receive(int fd, int revents, void *cb_data)
 		//
 
 		// sr_dbg("Requesting: %" PRIu64 " bytes.", devc->num_samples - devc->num_block_bytes);
-		sr_dbg("Requesting: %" PRIu64 " bytes.", 2500+1+1+1+4);
+		sr_dbg("Requesting: %d bytes.", TEK_BUFFER_SIZE + 1+1+1+4);
 		len = sr_scpi_read_data(scpi, (char *)devc->buffer, 6);
 		if (len == -1) {
 			sr_err("Read error, aborting capture.");
@@ -156,8 +154,8 @@ SR_PRIV int tek_tds2000b_receive(int fd, int revents, void *cb_data)
 			sdi->driver->dev_acquisition_stop(sdi);
 			return TRUE;
 		}
-		sr_dbg("Requesting balance: %" PRIu64 " bytes.", 2500+1);
-		len = sr_scpi_read_data(scpi, (char *)devc->buffer, 2501);
+		sr_dbg("Requesting balance: %d bytes.", TEK_BUFFER_SIZE + 1);
+		len = sr_scpi_read_data(scpi, (char *)devc->buffer, TEK_BUFFER_SIZE + 1);
 		if (len == -1) {
 			sr_err("Read error, aborting capture.");
 			std_session_send_df_frame_end(sdi);
@@ -166,13 +164,13 @@ SR_PRIV int tek_tds2000b_receive(int fd, int revents, void *cb_data)
 		}
 		devc->num_block_read = len;
 
-			while (devc->num_block_read < 2501) {
+			while (devc->num_block_read < TEK_BUFFER_SIZE + 1) {
 				/* We received all data as one block. */
 				/* Offset the data block buffer past the IEEE header and description header. */
 				// devc->buffer += devc->block_header_size;
 			//} else {
-				sr_dbg("Requesting: %" PRIu64 " bytes.", 2501 - devc->num_block_read);
-				len = sr_scpi_read_data(scpi, (char *)devc->buffer + devc->num_block_read, 2501 - devc->num_block_read);
+				sr_dbg("Requesting: %d bytes.", TEK_BUFFER_SIZE + 1 - devc->num_block_read);
+				len = sr_scpi_read_data(scpi, (char *)devc->buffer + devc->num_block_read, TEK_BUFFER_SIZE + 1 - devc->num_block_read);
 				if (len == -1) {
 					sr_err("Read error, aborting capture.");
 					std_session_send_df_frame_end(sdi);
@@ -185,10 +183,9 @@ SR_PRIV int tek_tds2000b_receive(int fd, int revents, void *cb_data)
 				// 	len--; //skip new line
 				// devc->num_block_bytes += len;
 			}
-				len = 2500;
+				len = TEK_BUFFER_SIZE;
 
 				float vdiv = devc->vdiv[ch->index];
-				float offset = devc->vert_offset[ch->index];
 				GArray *float_data;
 				static GArray *data;
 				float voltage, vdivlog;
@@ -221,7 +218,6 @@ SR_PRIV int tek_tds2000b_receive(int fd, int revents, void *cb_data)
 				sr_dbg("Transfer has been completed.");
 			//	devc->num_header_bytes = 0;
 			//	devc->num_block_bytes = 0;
-				read_complete = TRUE;
 				if (!sr_scpi_read_complete(scpi)) {
 					sr_err("Read should have been completed.");
 					std_session_send_df_frame_end(sdi);
@@ -230,7 +226,7 @@ SR_PRIV int tek_tds2000b_receive(int fd, int revents, void *cb_data)
 				}
 				devc->num_block_read = 0;
 			} else {
-				sr_dbg("%" PRIu64 " of %" PRIu64 " block bytes read.",
+				sr_dbg("%d of %d block bytes read.",
 					devc->num_block_read, 2501);
 			}
 
@@ -265,7 +261,6 @@ SR_PRIV int tek_tds2000b_channel_start(const struct sr_dev_inst *sdi)
 {
 	struct dev_context *devc;
 	struct sr_channel *ch;
-	const char *s;
 
 	if (!(devc = sdi->priv))
 		return SR_ERR;
@@ -279,15 +274,12 @@ SR_PRIV int tek_tds2000b_channel_start(const struct sr_dev_inst *sdi)
 			return SR_ERR;
 
 	sr_dbg("Starting wfm");
-	//	if (sr_scpi_read_begin(sdi->conn) != SR_OK)
 	if (sr_scpi_send(sdi->conn, "WAVF?") != SR_OK)
 			return SR_ERR;
 
 	sr_dbg("trigger wfm");
 
-	// devc->num_channel_bytes = 0;
-	// devc->num_header_bytes = 0;
-	// devc->num_block_bytes = 0;
+	devc->num_block_read = 0;
 
 	return SR_OK;
 }
@@ -311,14 +303,13 @@ SR_PRIV int tek_tds2000b_capture_start(const struct sr_dev_inst *sdi)
 	 * for each channel
 	 * {
 	 * 		dat:sou = CH<x>
-	 * 		*wai/*opp?
+	 * 		*wai / *opp?
 	 *      CURV?
 	 * 		WFMPre?
 	 * }
 	*/
 	unsigned int framecount;
-	char buf[200];
-	int ret;
+	
 
 	if (tek_tds2000b_channel_start(sdi) != SR_OK)
 		return SR_ERR;
@@ -368,6 +359,7 @@ static float parse_scpi_float(const char *data, int *out_err, float default_valu
 
 static const char* parse_scpi_string(char *data, int *out_err)
 {
+	(void)out_err;
 	return sr_scpi_unquote_string(data);
 }
 
@@ -390,7 +382,6 @@ static const char* render_scpi_enum(int value, const struct tek_enum_parser* par
 {
 	while (parser_table->name)
 	{
-		// TODO: check if really case insensitive
 		if (value == parser_table->enum_value)
 		{
 			return parser_table->name;
@@ -410,8 +401,8 @@ static int tek_tds2000b_parse_header(struct sr_dev_inst *sdi, char* end_buf)
 	int i = 0;
 	int ret = SR_OK;
 
-	sr_dbg("Parsing buffer of size %d", end_buf - buf);
-	sr_dbg("Line as recved as: %.*s", end_buf - buf - 1, buf);
+	sr_dbg("Parsing buffer of size %d", (int)(end_buf - buf));
+	sr_dbg("Line as recved as: %.*s", (int)(end_buf - buf - 1), buf);
 
 	// Parse in 3 steps:
 	// 1. find all semicolons, and replace with null bytes
@@ -455,7 +446,7 @@ YUNit <QString>;
 	enum TEK_DATA_FORMAT format = parse_scpi_enum(fields[i++], parse_table_data_format, &ret, FMT_RI);
 	enum TEK_DATA_ORDERING ordering = parse_scpi_enum(fields[i++], parse_table_data_ordering, &ret, ORDER_LSB);
 	devc->wavepre.num_pts = parse_scpi_int(fields[i++], &ret, -1);
-	char* wfid = parse_scpi_string(fields[i++], &ret);
+	const char* wfid = parse_scpi_string(fields[i++], &ret);
 	enum TEK_POINT_FORMAT pt_format = parse_scpi_enum(fields[i++], parse_table_point_format, &ret, PT_FMT_Y);
 	devc->wavepre.x_incr = parse_scpi_float(fields[i++], &ret, 1);
 	int pt_off = parse_scpi_int(fields[i++], &ret, 0); // always zero, parsed only for completeness
@@ -490,8 +481,7 @@ static int tek_tds2000b_read_header(struct sr_dev_inst *sdi)
 	struct sr_scpi_dev_inst *scpi = sdi->conn;
 	struct dev_context *devc = sdi->priv;
 	char *buf = (char *)devc->buffer;
-	int ret, desc_length;
-	long data_length = 0;
+	int ret;
 
 	// header is variable, but at least 100 bytes, and likely no more than 175 bytes
 
@@ -557,7 +547,7 @@ SR_PRIV int tek_tds2000b_get_dev_cfg_vertical(const struct sr_dev_inst *sdi)
 {
 	struct dev_context *devc;
 	char *cmd;
-	unsigned int i;
+	int i;
 	int res;
 
 	devc = sdi->priv;
@@ -595,11 +585,8 @@ SR_PRIV int tek_tds2000b_get_dev_cfg(const struct sr_dev_inst *sdi)
 	struct dev_context *devc;
 	struct sr_channel *ch;
 	char *cmd, *response;
-	unsigned int i;
-	int res, num_tokens;
-	gchar **tokens;
-	int len;
-	float trigger_pos;
+	int i;
+	int res;
 
 	devc = sdi->priv;
 
@@ -660,14 +647,13 @@ SR_PRIV int tek_tds2000b_get_dev_cfg(const struct sr_dev_inst *sdi)
 
 	/* Trigger source. edge, pulse, and video are always the same, it appears */
 	response = NULL;
-	tokens = NULL;
 	g_free(devc->trigger_source);
 	if (sr_scpi_get_string(sdi->conn, "TRIG:MAI:edge:sou?", &devc->trigger_source) != SR_OK)
 		return SR_ERR;
 	sr_dbg("Current trigger source: %s.", devc->trigger_source);
 
 	/* Horizontal trigger position. */
-	if (sr_scpi_get_string(sdi->conn, "hor:pos?", &devc->horiz_triggerpos) != SR_OK)
+	if (sr_scpi_get_float(sdi->conn, "hor:pos?", &devc->horiz_triggerpos) != SR_OK)
 		return SR_ERR;
 	
 	// triggerpos is in timeunits, convert back to percentage
@@ -690,6 +676,20 @@ SR_PRIV int tek_tds2000b_get_dev_cfg(const struct sr_dev_inst *sdi)
 		return SR_ERR;
 	sr_dbg("Current trigger level: %g.", devc->trigger_level);
 
+
+	/* Averaging */
+	response = NULL;
+	if (sr_scpi_get_string(sdi->conn, "acq:mod?", &response) != SR_OK)
+		return SR_ERR;
+	devc->average_enabled = g_ascii_strncasecmp(response, "average", 3) == 0;
+	sr_dbg("Acquisition mode: %s.", response);
+	g_free(response);
+
+	if (sr_scpi_get_int(sdi->conn, "acq:numav?", &devc->average_samples) != SR_OK)
+		return SR_ERR;
+	sr_dbg("Averaging samples: %i.", devc->average_samples);
+
+
 	return SR_OK;
 }
 
@@ -697,10 +697,7 @@ SR_PRIV int tek_tds2000b_get_dev_cfg(const struct sr_dev_inst *sdi)
 SR_PRIV int tek_tds2000b_get_dev_cfg_horizontal(const struct sr_dev_inst *sdi)
 {
 	struct dev_context *devc;
-	char *cmd;
-	int res;
-	char *sample_points_string;
-	float samplerate_scope, fvalue;
+	float fvalue;
 
 	devc = sdi->priv;
 
@@ -714,15 +711,19 @@ SR_PRIV int tek_tds2000b_get_dev_cfg_horizontal(const struct sr_dev_inst *sdi)
 
 	int memory_depth;
 
-	if (sr_scpi_get_float(sdi->conn, "hor:reco?", &memory_depth) != SR_OK)
+	if (sr_scpi_get_int(sdi->conn, "hor:reco?", &memory_depth) != SR_OK)
 		return SR_ERR;
 
 	// TODO: check memory_depth == 2500	
 
 	sr_dbg("Current timebase: %g.", devc->timebase);
-	devc->samplerate = 2500.0  / (devc->timebase * 10);
-	sr_dbg("Current samplerate: %0f.", devc->samplerate);
-	sr_dbg("Current memory depth: %" PRIu64 ".", 2500);//devc->memory_depth
+	fvalue = TEK_BUFFER_SIZE  / (devc->timebase * (float)TEK_NUM_HDIV);
+	devc->samplerate = MIN(fvalue, devc->model->sample_rate * 1000000.0);
+	if (devc->samplerate < fvalue)
+		sr_dbg("Current samplerate: %0g (limited by device).", devc->samplerate);
+	else
+		sr_dbg("Current samplerate: %0g.", devc->samplerate);
+	sr_dbg("Current memory depth: %d.", TEK_BUFFER_SIZE);// TODO: peak detect mode is half of this
 
 	return SR_OK;
 }
