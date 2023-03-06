@@ -83,29 +83,6 @@ static const uint32_t devopts_cg_analog[] = {
 	// Is SR_CONF_CHANNEL_CONFIG how "advanced" features are supported?
 };
 
-// TODO: fixup for compensation?
-
-// TODO: allow fine adjust
-// validated in doc page 75/2-57
-static const uint64_t vdivs[][2] = {
-	/* millivolts */
-	{2, 1000},
-	{5, 1000},
-	{10, 1000},
-	{20, 1000},
-	{50, 1000},
-	{100, 1000},
-	{200, 1000},
-	{500, 1000},
-	/* volts */
-	{1, 1},
-	{2, 1},
-	{5, 1},
-};
-
-// everyone uses the same voltrange
-#define VOLTRANGE_2m_5V 0, 0
-
 static const uint64_t timebases[][2] = {
 	/* nanoseconds */
 	{25, 10000000000},
@@ -164,6 +141,38 @@ static const uint64_t probe_factor_new[] = {1, 10, 20, 50, 100, 500, 1000};
 // tds200, tds2000, tds1000 ?
 static const uint64_t probe_factor_old[] = {1, 10, 100, 1000};
 
+// validated in doc page 75/2-57
+// probe factors multiply the vdivs
+#define VDIV_FACTOR(factor) { \
+	/* millivolts */ \
+	{2*factor, 1000}, \
+	{5*factor, 1000},  \
+	{10*factor, 1000}, \
+	{20*factor, 1000}, \
+	{50*factor, 1000}, \
+	{100*factor, 1000}, \
+	{200*factor, 1000}, \
+	{500*factor, 1000}, \
+	/* volts */ \
+	{1*factor, 1}, \
+	{2*factor, 1}, \
+	{5*factor, 1}, \
+}
+
+// TODO: allow fine adjust
+// Keep the order of the factors the same as probe_factor_new
+static const uint64_t vdivs_all[][11][2] = {
+	VDIV_FACTOR(1),
+	VDIV_FACTOR(10),
+	VDIV_FACTOR(20),
+	VDIV_FACTOR(50),
+	VDIV_FACTOR(100),
+	VDIV_FACTOR(500),
+	VDIV_FACTOR(1000),
+};
+
+// everyone uses the same voltrange
+#define VOLTRANGE_2m_5V 0, 0
 
 // TODO: current probe factor FIXME: 0.2x current probes are supported but this
 // is an int setting
@@ -443,6 +452,18 @@ static int dev_close(struct sr_dev_inst *sdi)
 	return sr_scpi_close(sdi->conn);
 }
 
+static int find_vdiv(struct dev_context *devc, int analog_channel)
+{
+	uint64_t find = devc->attenuation[analog_channel];
+	int i = 0;
+	int n = ARRAY_SIZE(probe_factor_new);
+
+	for (i = 0; i < n; i++)
+		if (find == probe_factor_new[i])
+			return i;
+	return -1;
+}
+
 static int config_get(uint32_t key, GVariant **data,
 	const struct sr_dev_inst *sdi, const struct sr_channel_group *cg)
 {
@@ -451,7 +472,7 @@ static int config_get(uint32_t key, GVariant **data,
 	const char *tmp_str;
 	int analog_channel = -1;
 	float smallest_diff = INFINITY;
-	int idx = -1;
+	int idx = -1, idxpf;
 	unsigned i;
 
 	if (!sdi)
@@ -539,9 +560,12 @@ static int config_get(uint32_t key, GVariant **data,
 			sr_dbg("Negative analog channel: %d.", analog_channel);
 			return SR_ERR_NA;
 		}
+		// vdiv depends on probe factors, so get the index first
+		if ((idxpf = find_vdiv(devc, analog_channel)) < 0)
+			return SR_ERR_ARG;
 		for (i = devc->model->voltrange_start;
-			i < ARRAY_SIZE(vdivs) - devc->model->voltrange_stop; i++) {
-			float vdiv = (float)vdivs[i][0] / vdivs[i][1];
+			i < ARRAY_SIZE(vdivs_all[idxpf]) - devc->model->voltrange_stop; i++) {
+			float vdiv = (float)vdivs_all[idxpf][i][0] / vdivs_all[idxpf][i][1];
 			float diff = fabsf(devc->vdiv[analog_channel] - vdiv);
 			if (diff < smallest_diff) {
 				smallest_diff = diff;
@@ -552,7 +576,7 @@ static int config_get(uint32_t key, GVariant **data,
 			sr_dbg("Negative vdiv index: %d.", idx);
 			return SR_ERR_NA;
 		}
-		*data = g_variant_new("(tt)", vdivs[idx][0], vdivs[idx][1]);
+		*data = g_variant_new("(tt)", vdivs_all[idxpf][idx][0], vdivs_all[idxpf][idx][1]);
 		break;
 	case SR_CONF_COUPLING:
 		if (analog_channel < 0) {
@@ -599,7 +623,7 @@ static int config_set(uint32_t key, GVariant *data,
 	uint64_t p;
 	double t_dbl;
 	int i;
-	int ret, idx;
+	int ret, idx, idxpf;
 	const char *tmp_str;
 	char cmd4[4];
 	gboolean b;
@@ -685,9 +709,13 @@ static int config_set(uint32_t key, GVariant *data,
 		if ((i = std_cg_idx(cg, devc->analog_groups,
 			     devc->model->channels)) < 0)
 			return SR_ERR_ARG;
-		if ((idx = std_u64_tuple_idx(data, ARRAY_AND_SIZE(vdivs))) < 0)
+		
+		// vdiv depends on probe factors, so get the index first
+		if ((idxpf = find_vdiv(devc, i)) < 0)
 			return SR_ERR_ARG;
-		devc->vdiv[i] = (float)vdivs[idx][0] / vdivs[idx][1];
+		if ((idx = std_u64_tuple_idx(data, ARRAY_AND_SIZE(vdivs_all[idxpf]))) < 0)
+			return SR_ERR_ARG;
+		devc->vdiv[i] = (float)vdivs_all[idxpf][idx][0] / vdivs_all[idxpf][idx][1];
 		ret = tektronix_ocp2k5_config_set(
 			sdi, "CH%d:SCA %.2e", i + 1, (double)devc->vdiv[i]);
 		return ret;
@@ -777,6 +805,7 @@ static int config_list(uint32_t key, GVariant **data,
 	const struct sr_dev_inst *sdi, const struct sr_channel_group *cg)
 {
 	struct dev_context *devc;
+	int idxpf, i;
 
 	devc = (sdi) ? sdi->priv : NULL;
 
@@ -810,7 +839,13 @@ static int config_list(uint32_t key, GVariant **data,
 			return SR_ERR_ARG;
 		if (!cg)
 			return SR_ERR_CHANNEL_GROUP;
-		*data = std_gvar_tuple_array(ARRAY_AND_SIZE(vdivs));
+		if ((i = std_cg_idx(cg, devc->analog_groups,
+			     devc->model->channels)) < 0)
+			return SR_ERR_ARG;
+		// vdiv depends on probe factors, so get the index first
+		if ((idxpf = find_vdiv(devc, i)) < 0)
+			return SR_ERR_ARG;
+		*data = std_gvar_tuple_array(ARRAY_AND_SIZE(vdivs_all[idxpf]));
 		break;
 	case SR_CONF_TIMEBASE:
 		if (!devc)
