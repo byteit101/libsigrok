@@ -47,6 +47,7 @@ static const uint32_t drvopts[] = {
  * 
  * General cleanup
  * current options?
+ * validate command applicability
 */
 
 static const uint32_t devopts[] = {
@@ -254,7 +255,7 @@ static const char *trigger_sources_models_TPS_2k[] = {
  * 
  * All specs can be found in Appendix A's of the linked pdfs
 */
-static const struct mini_device_spec device_models[] = {
+static const struct device_spec device_models[] = {
 
 	// TBS original-series
 	DEVICE_SPEC("TBS 1022", 2, 500M,  25MHz, new, 5ns_50s, 2m_5V, T_S_Remainder),
@@ -340,7 +341,7 @@ static struct sr_dev_inst *probe_device(struct sr_scpi_dev_inst *scpi)
 	struct sr_dev_inst *sdi;
 	struct dev_context *devc;
 	struct sr_scpi_hw_info *hw_info;
-	const struct mini_device_spec *device;
+	const struct device_spec *device;
 	struct sr_channel *ch;
 	unsigned int i;
 	gchar *channel_name;
@@ -434,7 +435,7 @@ static int dev_open(struct sr_dev_inst *sdi)
 		return SR_ERR;
 	}
 
-	if ((ret = tek_tds2000b_get_dev_cfg(sdi)) < 0) {
+	if ((ret = tektronix_ocp2k5_get_dev_cfg(sdi)) < 0) {
 		sr_err("Failed to get device config: %s.", sr_strerror(ret));
 		return SR_ERR;
 	}
@@ -494,8 +495,8 @@ static int config_get(uint32_t key, GVariant **data,
 		*data = g_variant_new_string(data_sources[devc->capture_mode]);
 		break;
 	case SR_CONF_SAMPLERATE:
-		tek_tds2000b_get_dev_cfg_horizontal(sdi);
-		*data = g_variant_new_uint64(devc->samplerate);
+		tektronix_ocp2k5_get_dev_cfg_horizontal(sdi);
+		*data = g_variant_new_uint64(MIN(TEK_BUFFER_SIZE  / (devc->timebase * (float)TEK_NUM_HDIV), devc->model->sample_rate * 1000000.0));
 		break;
 	case SR_CONF_TRIGGER_SOURCE:
 		*data = g_variant_new_string(devc->trigger_source);
@@ -623,7 +624,7 @@ static int config_set(uint32_t key, GVariant *data,
 			return SR_ERR_ARG;
 		g_free(devc->trigger_slope);
 		devc->trigger_slope = g_strdup((trigger_slopes[idx][0] == 'r') ? "RISE" : "FALL");
-		return tek_tds2000b_config_set(sdi, "TRIG:MAI:EDGE:SLO %s", devc->trigger_slope);
+		return tektronix_ocp2k5_config_set(sdi, "TRIG:MAI:EDGE:SLO %s", devc->trigger_slope);
 	case SR_CONF_HORIZ_TRIGGERPOS:
 		t_dbl = g_variant_get_double(data);
 		if (t_dbl < 0.0 || t_dbl > 1.0) {
@@ -634,7 +635,7 @@ static int config_set(uint32_t key, GVariant *data,
 		/* We have the trigger offset as a percentage of the frame, but
 		 * need to express this in seconds. */
 		t_dbl = -(devc->horiz_triggerpos - 0.5) * devc->timebase * (10);
-		return tek_tds2000b_config_set(sdi, "hor:mai:pos %.3e", t_dbl);
+		return tektronix_ocp2k5_config_set(sdi, "hor:mai:pos %.3e", t_dbl);
 	case SR_CONF_TRIGGER_LEVEL:
 		if (!strcmp(devc->trigger_source, "AC Line"))
 			sr_err("Can't set level on AC line trigger, ignoring");
@@ -642,7 +643,7 @@ static int config_set(uint32_t key, GVariant *data,
 
 		t_dbl = g_variant_get_double(data);
 		g_ascii_formatd(buffer, sizeof(buffer), "%.3f", t_dbl);
-		ret = tek_tds2000b_config_set(sdi, "TRIG:MAI:LEV %s", buffer);
+		ret = tektronix_ocp2k5_config_set(sdi, "TRIG:MAI:LEV %s", buffer);
 		if (ret == SR_OK)
 			devc->trigger_level = t_dbl;
 		break;
@@ -652,9 +653,9 @@ static int config_set(uint32_t key, GVariant *data,
 		if (idx < devc->model->timebase_start)
 			return SR_ERR_ARG;
 		devc->timebase = (float)timebases[idx][0] / timebases[idx][1];
-		ret = tek_tds2000b_config_set(sdi, "hor:sca %.1e", devc->timebase);
+		ret = tektronix_ocp2k5_config_set(sdi, "hor:sca %.1e", devc->timebase);
 		if (ret == SR_OK)
-			tek_tds2000b_get_dev_cfg_horizontal(sdi);
+			tektronix_ocp2k5_get_dev_cfg_horizontal(sdi);
 		return ret;
 	case SR_CONF_TRIGGER_SOURCE:
 		if ((idx = std_str_idx(data, devc->model->trigger_sources, devc->model->num_trigger_sources)) < 0)
@@ -665,7 +666,7 @@ static int config_set(uint32_t key, GVariant *data,
 		{
 			// ONLY set edge trigger, as only edge trigger supports this
 			// TODO: raise error when not edge source	
-			return tek_tds2000b_config_set(sdi, "TRIG:mai:edge:sou line");
+			return tektronix_ocp2k5_config_set(sdi, "TRIG:mai:edge:sou line");
 		}
 		else if (!strcmp(devc->trigger_source, "Ext /5"))
 			tmp_str = "EXT5";
@@ -674,7 +675,7 @@ static int config_set(uint32_t key, GVariant *data,
 		else
 			tmp_str = (char *)devc->trigger_source;
 			// TODO: pulse and video
-		return tek_tds2000b_config_set(sdi, "TRIG:mai:edge:sou %s", tmp_str);
+		return tektronix_ocp2k5_config_set(sdi, "TRIG:mai:edge:sou %s", tmp_str);
 	case SR_CONF_VDIV:
 		if (!cg)
 			return SR_ERR_CHANNEL_GROUP;
@@ -683,7 +684,7 @@ static int config_set(uint32_t key, GVariant *data,
 		if ((idx = std_u64_tuple_idx(data, ARRAY_AND_SIZE(vdivs))) < 0)
 			return SR_ERR_ARG;
 		devc->vdiv[i] = (float)vdivs[idx][0] / vdivs[idx][1];
-		ret = tek_tds2000b_config_set(sdi, "CH%d:SCA %.2e", i + 1, (double)devc->vdiv[i]);
+		ret = tektronix_ocp2k5_config_set(sdi, "CH%d:SCA %.2e", i + 1, (double)devc->vdiv[i]);
 		return ret;
 	case SR_CONF_COUPLING:
 		if (!cg)
@@ -696,7 +697,7 @@ static int config_set(uint32_t key, GVariant *data,
 		devc->coupling[i] = g_strdup(coupling[idx]);
 		strncpy(cmd4, devc->coupling[i], 3);
 		cmd4[3] = 0;
-		return tek_tds2000b_config_set(sdi, "CH%d:COUP %s", i + 1, cmd4);
+		return tektronix_ocp2k5_config_set(sdi, "CH%d:COUP %s", i + 1, cmd4);
 	case SR_CONF_PROBE_FACTOR:
 		if (!cg)
 			return SR_ERR_CHANNEL_GROUP;
@@ -706,9 +707,9 @@ static int config_set(uint32_t key, GVariant *data,
 			return SR_ERR_ARG;
 		p = g_variant_get_uint64(data);
 		devc->attenuation[i] = devc->model->probe_factors[idx];
-		ret = tek_tds2000b_config_set(sdi, "CH%d:PROBE %" PRIu64, i + 1, p);
+		ret = tektronix_ocp2k5_config_set(sdi, "CH%d:PROBE %" PRIu64, i + 1, p);
 		if (ret == SR_OK)
-			tek_tds2000b_get_dev_cfg_vertical(sdi);
+			tektronix_ocp2k5_get_dev_cfg_vertical(sdi);
 		return ret;
 	case SR_CONF_ENABLED:
 		sr_dbg("configuring channel");
@@ -718,7 +719,7 @@ static int config_set(uint32_t key, GVariant *data,
 			return SR_ERR_ARG;
 		b = g_variant_get_boolean(data);
 			devc->analog_channels[i] = b;
-		ret = tek_tds2000b_config_set(sdi, "SEL:CH%d %s", i + 1,
+		ret = tektronix_ocp2k5_config_set(sdi, "SEL:CH%d %s", i + 1,
 			b ? "ON" : "OFF");
 		return ret;
 	case SR_CONF_DATA_SOURCE:
@@ -730,25 +731,25 @@ static int config_set(uint32_t key, GVariant *data,
 		// TODO: you can configure peak detect mode, but the data isn't parsed yet
 		devc->peak_enabled = g_variant_get_boolean(data);
 		if (devc->peak_enabled)
-			ret = tek_tds2000b_config_set(sdi, "acq:mode peak");
+			ret = tektronix_ocp2k5_config_set(sdi, "acq:mode peak");
 		else
-			ret = tek_tds2000b_config_set(sdi, "acq:mode sam");
+			ret = tektronix_ocp2k5_config_set(sdi, "acq:mode sam");
 		devc->average_enabled = 0;
 		sr_dbg("%s peak detect", devc->peak_enabled ? "Enabling" : "Disabling");
 		break;
 	case SR_CONF_AVERAGING:
 		devc->average_enabled = g_variant_get_boolean(data);
 		if (devc->average_enabled)
-			ret = tek_tds2000b_config_set(sdi, "acq:mode ave");
+			ret = tektronix_ocp2k5_config_set(sdi, "acq:mode ave");
 		else
-			ret = tek_tds2000b_config_set(sdi, "acq:mode sam");
+			ret = tektronix_ocp2k5_config_set(sdi, "acq:mode sam");
 		devc->peak_enabled = 0;
 		sr_dbg("%s averaging", devc->average_enabled ? "Enabling" : "Disabling");
 		break;
 	case SR_CONF_AVG_SAMPLES:
 		devc->average_samples = g_variant_get_uint64(data);
 		sr_dbg("Setting averaging rate to %d", devc->average_samples);
-		ret = tek_tds2000b_config_set(sdi, "acq:numav %d", devc->average_samples);
+		ret = tektronix_ocp2k5_config_set(sdi, "acq:numav %d", devc->average_samples);
 		break;	
 	default:
 		return SR_ERR_NA;
@@ -848,7 +849,7 @@ static int dev_acquisition_start(const struct sr_dev_inst *sdi)
 				devc->enabled_channels, ch);
 		if (ch->enabled != devc->analog_channels[ch->index]) {
 			/* Enabled channel is currently disabled, or vice versa. */
-			if (tek_tds2000b_config_set(sdi, "SEL:CH%d %s", ch->index + 1,
+			if (tektronix_ocp2k5_config_set(sdi, "SEL:CH%d %s", ch->index + 1,
 				ch->enabled ? "ON" : "OFF") != SR_OK)
 				return SR_ERR;
 			devc->analog_channels[ch->index] = ch->enabled;
@@ -858,7 +859,7 @@ static int dev_acquisition_start(const struct sr_dev_inst *sdi)
 		return SR_ERR;
 
 	
-	tek_tds2000b_get_dev_cfg_horizontal(sdi);
+	tektronix_ocp2k5_get_dev_cfg_horizontal(sdi);
 
 	if (sr_scpi_get_bool(scpi, "acq:state?", &devc->prior_state_running) != SR_OK)
 		return SR_ERR;
@@ -870,13 +871,13 @@ static int dev_acquisition_start(const struct sr_dev_inst *sdi)
 
  	// these models are slow, and TDS2xxxB takes ~1.5 seconds to begin transmitting, so poll slowly
 	sr_scpi_source_add(sdi->session, scpi, G_IO_IN, 1300,
-		tek_tds2000b_receive, (void *) sdi);
+		tektronix_ocp2k5_receive, (void *) sdi);
 
 	std_session_send_df_header(sdi);
 
 	devc->channel_entry = devc->enabled_channels;
 
-	if (tek_tds2000b_capture_start(sdi) != SR_OK)
+	if (tektronix_ocp2k5_capture_start(sdi) != SR_OK)
 		return SR_ERR;
 
 	/* Start of first frame. */

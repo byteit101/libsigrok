@@ -17,17 +17,17 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-#ifndef LIBSIGROK_HARDWARE_TEKTRONIX_TDS2000B_PROTOCOL_H
-#define LIBSIGROK_HARDWARE_TEKTRONIX_TDS2000B_PROTOCOL_H
+#ifndef LIBSIGROK_HARDWARE_TEKTRONIX_OCP2K5_PROTOCOL_H
+#define LIBSIGROK_HARDWARE_TEKTRONIX_OCP2K5_PROTOCOL_H
 
 #include <stdint.h>
 #include <glib.h>
 #include <libsigrok/libsigrok.h>
 #include "libsigrok-internal.h"
 
-#define LOG_PREFIX "tektronix-tds2000b"
+#define LOG_PREFIX "tektronix-ocp2k5"
 
-
+/* Mostly for general information, but also used for debug messages */
 enum bandwidth {
 	BW_25MHz = 25,
 	BW_30MHz = 30,
@@ -40,13 +40,15 @@ enum bandwidth {
 	BW_150MHz = 150,
 	BW_200MHz = 200,
 };
+
 enum samplerate {
 	SA_500M = 500,
 	SA_1G = 1000,
 	SA_2G = 2000,
 };
 
-struct mini_device_spec {
+/* Describes model-specific features. See DEVICE_SPEC() macro in api.c for the "constructor" */
+struct device_spec {
 	const char *model;
 	int channels;
 	
@@ -70,7 +72,9 @@ struct mini_device_spec {
 #define TEK_BUFFER_SIZE 2500
 #define TEK_NUM_HDIV 10
 #define TEK_NUM_VDIV 8
+#define MAX_ANALOG_CHANNELS 4
 
+/* Wave data information */
 
 enum TEK_DATA_ENCODING {
 	ENC_ASCII,
@@ -111,14 +115,27 @@ enum TEK_Y_UNITS {
 	YU_AA
 };
 
-// Must be in same order as the strings
-enum DRIVER_CAPTURE_MODE {
-	CAPTURE_LIVE, // reset trigger, clear
-	CAPTURE_ONE_SHOT, // reset trigger, no clear
-	CAPTURE_DISPLAY, // no reset, clear
-	CAPTURE_MEMORY, // no reset, no clear
+struct most_recent_wave_preamble {
+	//Xn = XZEro + XINcr (n - PT_OFf)
+	float x_zero; // (in xunis)
+	float x_incr; // seconds per point or herts per point
+	enum TEK_X_UNITS x_unit;
+
+	//value_in_YUNits = ((curve_in_dl - YOFF_in_dl) * YMUlt) + YZERO_in_YUNits
+	float y_mult; // (in yunits)
+	float y_off; // (in digitizer levels)
+	float y_zero; // (in yunits)
+	enum TEK_Y_UNITS y_unit;
+
+	int num_pts;
 };
 
+enum DRIVER_CAPTURE_MODE {
+	CAPTURE_LIVE, // reset trigger, re-enable at end
+	CAPTURE_ONE_SHOT, // reset trigger, no clear
+	CAPTURE_DISPLAY, // no reset, re-enable at end
+	CAPTURE_MEMORY, // no reset, no clear
+};
 
 enum wait_events {
 	WAIT_CAPTURE,
@@ -126,84 +143,56 @@ enum wait_events {
 	WAIT_DONE,
 };
 
-struct tek_enum_parser {
-	int enum_value;
-	const char* name;
-};
-
-struct most_recent_wave_preamble {
-	//For Y format, the time (absolute coordinate) of a point, relative to the trigger, can
-//be calculated using the following formula. N ranges from 0 to 2499.
-//X n = XZEro + XINcr (n - PT_OFf)
-	// double x_mult;
-	// double x_off;
-	float x_zero; // (in xunis)
-	float x_incr; // seconds per point or herts per point
-	enum TEK_X_UNITS x_unit; // s or hz
-
-//value_in_YUNits = ((curve_in_dl - YOFF_in_dl) * YMUlt) + YZERO_in_YUNits
-
-	float y_mult; // (in yunits)
-	float y_off; // (in digitizer levels)
-	float y_zero; // (in yunits)
-	enum TEK_Y_UNITS y_unit; // Volts, U, db, A, VA, AA, VV (semi-conditional)
-
-	int num_pts;
-
-	// char* wfid_description;
-
-};
-
-#define MAX_ANALOG_CHANNELS 4
 struct dev_context {
+	/* Core information */
 	struct sr_channel_group **analog_groups;
-	const struct mini_device_spec *model;
+	const struct device_spec *model;
 
+	/* Current & configured channel settings */
 	gboolean analog_channels[MAX_ANALOG_CHANNELS];
-	float timebase;
-	float samplerate;
 	float vdiv[MAX_ANALOG_CHANNELS];
 	float vert_offset[MAX_ANALOG_CHANNELS];
 	float attenuation[MAX_ANALOG_CHANNELS];
 	char *coupling[MAX_ANALOG_CHANNELS];
+
+	/* Current & configured device settings */
+	float timebase;
 	char *trigger_source;
 	float horiz_triggerpos;
 	char *trigger_slope;
 	float trigger_level;
-	int average_samples;
+
+	/* Current & configured acquisition settings*/
 	gboolean average_enabled;
+	int average_samples;
 	gboolean peak_enabled;
-
-	enum wait_events acquire_status;
-
-	struct most_recent_wave_preamble wavepre;
 	enum DRIVER_CAPTURE_MODE capture_mode;
 
+	/* Acquisition state */
+	enum wait_events acquire_status;
+	struct most_recent_wave_preamble wavepre;
 	gboolean prior_state_running;
 	gboolean prior_state_single;
 
 	uint64_t limit_frames;
-	/* Acquisition settings */
-	GSList *enabled_channels;
-	/* GSList entry for the current channel. */
-	GSList *channel_entry;
-	/* Number of frames received in total. */
 	uint64_t num_frames;
+	GSList *enabled_channels;
+	GSList *channel_entry;
 
 	/* Acq buffers used for reading from the scope and sending data to app. */
 	unsigned char *buffer;
 	int num_block_read;
 };
 
-SR_PRIV int tek_tds2000b_config_set(const struct sr_dev_inst *sdi,
+SR_PRIV int tektronix_ocp2k5_config_set(const struct sr_dev_inst *sdi,
 	const char *format, ...);
-SR_PRIV int tek_tds2000b_capture_start(const struct sr_dev_inst *sdi);
-SR_PRIV int tek_tds2000b_channel_start(const struct sr_dev_inst *sdi);
-SR_PRIV int tek_tds2000b_capture_finish(const struct sr_dev_inst *sdi);
-SR_PRIV int tek_tds2000b_receive(int fd, int revents, void *cb_data);
-SR_PRIV int tek_tds2000b_get_dev_cfg(const struct sr_dev_inst *sdi);
-SR_PRIV int tek_tds2000b_get_dev_cfg_vertical(const struct sr_dev_inst *sdi);
-SR_PRIV int tek_tds2000b_get_dev_cfg_horizontal(const struct sr_dev_inst *sdi);
+SR_PRIV int tektronix_ocp2k5_capture_start(const struct sr_dev_inst *sdi);
+SR_PRIV int tektronix_ocp2k5_channel_start(const struct sr_dev_inst *sdi);
+SR_PRIV int tektronix_ocp2k5_capture_finish(const struct sr_dev_inst *sdi);
+SR_PRIV int tektronix_ocp2k5_receive(int fd, int revents, void *cb_data);
+SR_PRIV int tektronix_ocp2k5_get_dev_cfg(const struct sr_dev_inst *sdi);
+SR_PRIV int tektronix_ocp2k5_get_dev_cfg_vertical(const struct sr_dev_inst *sdi);
+SR_PRIV int tektronix_ocp2k5_get_dev_cfg_horizontal(const struct sr_dev_inst *sdi);
 
 
 #endif

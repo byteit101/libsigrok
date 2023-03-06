@@ -30,6 +30,11 @@
 #include "protocol.h"
 
 
+struct tek_enum_parser {
+	int enum_value;
+	const char* name;
+};
+
 static const struct tek_enum_parser parse_table_data_encoding[] = {
 	{ ENC_ASCII, "ASC" },
 	{ ENC_BINARY, "BIN" },
@@ -69,10 +74,10 @@ static const struct tek_enum_parser parse_table_yunits[] = {
 	{ 0, NULL}
 };
 
-static int tek_tds2000b_read_header(struct sr_dev_inst *sdi);
+static int tektronix_ocp2k5_read_header(struct sr_dev_inst *sdi);
 
 /* Revert all settings, if requested. */
-SR_PRIV int tek_tds2000b_capture_finish(const struct sr_dev_inst *sdi)
+SR_PRIV int tektronix_ocp2k5_capture_finish(const struct sr_dev_inst *sdi)
 {
 	struct dev_context *devc;
 
@@ -84,17 +89,17 @@ SR_PRIV int tek_tds2000b_capture_finish(const struct sr_dev_inst *sdi)
 	sr_dbg("Setting exiting setttings back");
 
 	if (devc->capture_mode == CAPTURE_LIVE || devc->capture_mode == CAPTURE_DISPLAY) {
-		if (tek_tds2000b_config_set(sdi, "ACQ:stopa runstop") != SR_OK)
+		if (tektronix_ocp2k5_config_set(sdi, "ACQ:stopa runstop") != SR_OK)
 			return SR_ERR;
 		
-		if (tek_tds2000b_config_set(sdi, "ACQ:STATE RUN") != SR_OK)
+		if (tektronix_ocp2k5_config_set(sdi, "ACQ:STATE RUN") != SR_OK)
 			return SR_ERR;
 	}
 
 	return SR_OK;
 }
 
-SR_PRIV int tek_tds2000b_receive(int fd, int revents, void *cb_data)
+SR_PRIV int tektronix_ocp2k5_receive(int fd, int revents, void *cb_data)
 {
 	struct sr_dev_inst *sdi;
 	struct dev_context *devc;
@@ -129,7 +134,7 @@ SR_PRIV int tek_tds2000b_receive(int fd, int revents, void *cb_data)
 		
 
 		sr_dbg("New block with header expected.");
-		len = tek_tds2000b_read_header(sdi);
+		len = tektronix_ocp2k5_read_header(sdi);
 		if (len == 0)
 			/* Still reading the header. */
 			return TRUE;
@@ -238,19 +243,19 @@ SR_PRIV int tek_tds2000b_receive(int fd, int revents, void *cb_data)
 				sr_dbg("Doing another channel");
 			/* We got the frame for this channel, now get the next channel. */
 			devc->channel_entry = devc->channel_entry->next;
-			tek_tds2000b_channel_start(sdi);
+			tektronix_ocp2k5_channel_start(sdi);
 		} else {
 			/* Done with this frame. */
 			std_session_send_df_frame_end(sdi);
 			if (++devc->num_frames == devc->limit_frames) {
 				/* Last frame, stop capture. */
 				sdi->driver->dev_acquisition_stop(sdi);
-				tek_tds2000b_capture_finish(sdi);
+				tektronix_ocp2k5_capture_finish(sdi);
 			} else {
 				sr_dbg("Doing another frame");
 				/* Get the next frame, starting with the first channel. */
 				devc->channel_entry = devc->enabled_channels;
-				tek_tds2000b_capture_start(sdi);
+				tektronix_ocp2k5_capture_start(sdi);
 
 				/* Start of next frame. */
 				std_session_send_df_frame_begin(sdi);
@@ -262,7 +267,7 @@ SR_PRIV int tek_tds2000b_receive(int fd, int revents, void *cb_data)
 
 
 /* Start reading data from the current channel. */
-SR_PRIV int tek_tds2000b_channel_start(const struct sr_dev_inst *sdi)
+SR_PRIV int tektronix_ocp2k5_channel_start(const struct sr_dev_inst *sdi)
 {
 	struct dev_context *devc;
 	struct sr_channel *ch;
@@ -294,7 +299,7 @@ SR_PRIV int tek_tds2000b_channel_start(const struct sr_dev_inst *sdi)
 }
 
 /* Start capturing a new frameset. */
-SR_PRIV int tek_tds2000b_capture_start(const struct sr_dev_inst *sdi)
+SR_PRIV int tektronix_ocp2k5_capture_start(const struct sr_dev_inst *sdi)
 {
 	struct dev_context *devc;
 
@@ -302,9 +307,9 @@ SR_PRIV int tek_tds2000b_capture_start(const struct sr_dev_inst *sdi)
 		return SR_ERR;
 
 	// Force our capture settings to 1 byte, msb, binary
-	if (tek_tds2000b_config_set(sdi, "dat:enc RIB") != SR_OK)
+	if (tektronix_ocp2k5_config_set(sdi, "dat:enc RIB") != SR_OK)
 		return SR_ERR;
-	if (tek_tds2000b_config_set(sdi, "dat:wid 1") != SR_OK)
+	if (tektronix_ocp2k5_config_set(sdi, "dat:wid 1") != SR_OK)
 		return SR_ERR;
 
 
@@ -317,21 +322,21 @@ SR_PRIV int tek_tds2000b_capture_start(const struct sr_dev_inst *sdi)
 			sr_dbg("Triggering restart");
 			// stop before setting single sequence mode, so that we can get the same waveform data per channel
 			if (!devc->prior_state_single) {
-				if (tek_tds2000b_config_set(sdi, "ACQ:STATE STOP") != SR_OK)
+				if (tektronix_ocp2k5_config_set(sdi, "ACQ:STATE STOP") != SR_OK)
 					return SR_ERR;
-				if (tek_tds2000b_config_set(sdi, "ACQ:stopa seq") != SR_OK)
+				if (tektronix_ocp2k5_config_set(sdi, "ACQ:stopa seq") != SR_OK)
 					return SR_ERR;
 			}
-			if (tek_tds2000b_config_set(sdi, "ACQ:STATE RUN") != SR_OK)
+			if (tektronix_ocp2k5_config_set(sdi, "ACQ:STATE RUN") != SR_OK)
 				return SR_ERR;
 		}
 	} else {
 		// If you are requesting multiple frames, all capture modes reset
-		if (tek_tds2000b_config_set(sdi, "ACQ:STATE RUN") != SR_OK)
+		if (tektronix_ocp2k5_config_set(sdi, "ACQ:STATE RUN") != SR_OK)
 			return SR_ERR;
 	}
 
-	if (tek_tds2000b_channel_start(sdi) != SR_OK)
+	if (tektronix_ocp2k5_channel_start(sdi) != SR_OK)
 		return SR_ERR;
 
 	sr_dbg("Starting data capture for curves.");
@@ -403,7 +408,7 @@ static const char* render_scpi_enum(int value, const struct tek_enum_parser* par
 	return "NULL";
 }
 
-static int tek_tds2000b_parse_header(struct sr_dev_inst *sdi, char* end_buf)
+static int tektronix_ocp2k5_parse_header(struct sr_dev_inst *sdi, char* end_buf)
 {
 	struct sr_scpi_dev_inst *scpi = sdi->conn;
 	struct dev_context *devc = sdi->priv;
@@ -488,7 +493,7 @@ YUNit <QString>;
 }
 
 /* Read the header of a data block. */
-static int tek_tds2000b_read_header(struct sr_dev_inst *sdi)
+static int tektronix_ocp2k5_read_header(struct sr_dev_inst *sdi)
 {
 	struct sr_scpi_dev_inst *scpi = sdi->conn;
 	struct dev_context *devc = sdi->priv;
@@ -521,12 +526,12 @@ static int tek_tds2000b_read_header(struct sr_dev_inst *sdi)
 			attempt *=2;
 	}
 
-	if (tek_tds2000b_parse_header(sdi, buf+1) != SR_OK)
+	if (tektronix_ocp2k5_parse_header(sdi, buf+1) != SR_OK)
 		ret = -1;
 	return ret;
 }
 /* Send a configuration setting. */
-SR_PRIV int tek_tds2000b_config_set(const struct sr_dev_inst *sdi, const char *format, ...)
+SR_PRIV int tektronix_ocp2k5_config_set(const struct sr_dev_inst *sdi, const char *format, ...)
 {
 	va_list args;
 	int ret;
@@ -538,7 +543,7 @@ SR_PRIV int tek_tds2000b_config_set(const struct sr_dev_inst *sdi, const char *f
 	return ret;
 }
 
-SR_PRIV int tek_tds2000b_get_dev_cfg_vertical(const struct sr_dev_inst *sdi)
+SR_PRIV int tektronix_ocp2k5_get_dev_cfg_vertical(const struct sr_dev_inst *sdi)
 {
 	struct dev_context *devc;
 	char *cmd;
@@ -575,7 +580,7 @@ SR_PRIV int tek_tds2000b_get_dev_cfg_vertical(const struct sr_dev_inst *sdi)
 }
 
 
-SR_PRIV int tek_tds2000b_get_dev_cfg(const struct sr_dev_inst *sdi)
+SR_PRIV int tektronix_ocp2k5_get_dev_cfg(const struct sr_dev_inst *sdi)
 {
 	struct dev_context *devc;
 	struct sr_channel *ch;
@@ -618,11 +623,11 @@ SR_PRIV int tek_tds2000b_get_dev_cfg(const struct sr_dev_inst *sdi)
 		sr_dbg("CH%d %g", i + 1, devc->attenuation[i]);
 
 	/* Vertical gain and offset. */
-	if (tek_tds2000b_get_dev_cfg_vertical(sdi) != SR_OK)
+	if (tektronix_ocp2k5_get_dev_cfg_vertical(sdi) != SR_OK)
 		return SR_ERR;
 
 
-	if (tek_tds2000b_get_dev_cfg_horizontal(sdi) != SR_OK)
+	if (tektronix_ocp2k5_get_dev_cfg_horizontal(sdi) != SR_OK)
 		return SR_ERR;
 
 	/* Coupling. */
@@ -690,7 +695,7 @@ SR_PRIV int tek_tds2000b_get_dev_cfg(const struct sr_dev_inst *sdi)
 }
 
 
-SR_PRIV int tek_tds2000b_get_dev_cfg_horizontal(const struct sr_dev_inst *sdi)
+SR_PRIV int tektronix_ocp2k5_get_dev_cfg_horizontal(const struct sr_dev_inst *sdi)
 {
 	struct dev_context *devc;
 	float fvalue;
@@ -714,11 +719,10 @@ SR_PRIV int tek_tds2000b_get_dev_cfg_horizontal(const struct sr_dev_inst *sdi)
 
 	sr_dbg("Current timebase: %g.", devc->timebase);
 	fvalue = TEK_BUFFER_SIZE  / (devc->timebase * (float)TEK_NUM_HDIV);
-	devc->samplerate = MIN(fvalue, devc->model->sample_rate * 1000000.0);
-	if (devc->samplerate < fvalue)
-		sr_dbg("Current samplerate: %0g (limited by device).", devc->samplerate);
+	if (devc->model->sample_rate * 1000000.0 < fvalue)
+		sr_dbg("Current samplerate: %,fSa/s (limited by device).", devc->model->sample_rate * 1000000.0);
 	else
-		sr_dbg("Current samplerate: %0g.", devc->samplerate);
+		sr_dbg("Current samplerate: %,fSa/s.", fvalue);
 	sr_dbg("Current memory depth: %d.", TEK_BUFFER_SIZE);// TODO: peak detect mode is half of this
 
 	return SR_OK;
