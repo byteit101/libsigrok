@@ -48,6 +48,7 @@ static const uint32_t drvopts[] = {
  * General cleanup
  * current options?
  * validate command applicability
+ * "properly" parse block arg
 */
 
 static const uint32_t devopts[] = {
@@ -165,13 +166,6 @@ static const char *coupling[] = {
 // validated in doc page 74/2-53
 static const uint64_t probe_factor_new[] = {
 	1, 10, 20, 50, 100, 500, 1000
-	//tbs1000B/EDU,
-	//tbs1000,
-	//tds2000c,
-	//tds1000C-edu,
-	//tds2000b,
-	//tds1000B,
-	//tps2000/B
 };
 // TODO: check that  tds2000, tds1000  use this set
 static const uint64_t probe_factor_old[] = {
@@ -396,7 +390,6 @@ static struct sr_dev_inst *probe_device(struct sr_scpi_dev_inst *scpi)
 	devc->capture_mode = CAPTURE_MEMORY;
 
 	sr_scpi_hw_info_free(hw_info);
-
 
 	devc->analog_groups = g_malloc0(sizeof(struct sr_channel_group *) *
 		device->channels);
@@ -734,7 +727,7 @@ static int config_set(uint32_t key, GVariant *data,
 			ret = tektronix_ocp2k5_config_set(sdi, "acq:mode peak");
 		else
 			ret = tektronix_ocp2k5_config_set(sdi, "acq:mode sam");
-		devc->average_enabled = 0;
+		devc->average_enabled = FALSE;
 		sr_dbg("%s peak detect", devc->peak_enabled ? "Enabling" : "Disabling");
 		break;
 	case SR_CONF_AVERAGING:
@@ -743,7 +736,7 @@ static int config_set(uint32_t key, GVariant *data,
 			ret = tektronix_ocp2k5_config_set(sdi, "acq:mode ave");
 		else
 			ret = tektronix_ocp2k5_config_set(sdi, "acq:mode sam");
-		devc->peak_enabled = 0;
+		devc->peak_enabled = FALSE;
 		sr_dbg("%s averaging", devc->average_enabled ? "Enabling" : "Disabling");
 		break;
 	case SR_CONF_AVG_SAMPLES:

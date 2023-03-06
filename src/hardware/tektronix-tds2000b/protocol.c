@@ -284,14 +284,6 @@ SR_PRIV int tektronix_ocp2k5_channel_start(const struct sr_dev_inst *sdi)
 	if (sr_scpi_send(sdi->conn, "DAT:SOU CH%d",
 		ch->index + 1) != SR_OK)
 			return SR_ERR;
-		
-	char* out;
-	if (sr_scpi_get_string(sdi->conn, "dat:sou?", &out) != SR_OK)
-	{
-		sr_dbg("FOund out: %s", out);
-		return SR_ERR;
-	}
-		sr_dbg("good out out: %s", out);
 
 	// wait for trigger (asynchronous)
 	if (devc->acquire_status == WAIT_CAPTURE&& (devc->num_frames > 0 || devc->capture_mode == CAPTURE_LIVE || devc->capture_mode == CAPTURE_ONE_SHOT || devc->prior_state_running))
@@ -426,10 +418,18 @@ static int tektronix_ocp2k5_parse_header(struct sr_dev_inst *sdi, char* end_buf)
 	char *fields[17]; // one extra for block ()
 	int i = 0;
 	int ret = SR_OK;
+	int pt_off;
+	const char* wfid;
+	int bit_width;
+	int byte_width;
+	enum TEK_POINT_FORMAT pt_format;
+	enum TEK_DATA_ORDERING ordering;
+	enum TEK_DATA_FORMAT format;
+	enum TEK_DATA_ENCODING encoding;
 	(void)scpi;
 
-	sr_dbg("Parsing buffer of size %d", (int)(end_buf - buf));
-	sr_dbg("Line as recved as: %.*s", (int)(end_buf - buf - 1), buf);
+	sr_dbg("Parsing header of size %d", (int)(end_buf - buf));
+	sr_spew("Line as receved: %.*s", (int)(end_buf - buf - 1), buf);
 
 	// Parse in 3 steps:
 	// 1. find all semicolons, and replace with null bytes
@@ -445,7 +445,7 @@ static int tektronix_ocp2k5_parse_header(struct sr_dev_inst *sdi, char* end_buf)
 		}
 		buf++;
 	}
-	sr_dbg("Expected 17 indexes, found %d in header", i);
+	sr_spew("Expected 17 indexes, found %d in header", i);
 /*
 BYT_Nr <NR1>;
 BIT_Nr <NR1>;
@@ -465,18 +465,19 @@ YOFF <NR3>;
 YUNit <QString>;
 #..block
 */
+
 	i = 0;
 	// TODO: assert a few of these values
-	int byte_width = parse_scpi_int(fields[i++], &ret, 1);
-	int bit_width = parse_scpi_int(fields[i++], &ret, 8);
-	enum TEK_DATA_ENCODING encoding = parse_scpi_enum(fields[i++], parse_table_data_encoding, &ret, ENC_ASCII);
-	enum TEK_DATA_FORMAT format = parse_scpi_enum(fields[i++], parse_table_data_format, &ret, FMT_RI);
-	enum TEK_DATA_ORDERING ordering = parse_scpi_enum(fields[i++], parse_table_data_ordering, &ret, ORDER_LSB);
+	byte_width = parse_scpi_int(fields[i++], &ret, 1);
+	bit_width = parse_scpi_int(fields[i++], &ret, 8);
+	encoding = parse_scpi_enum(fields[i++], parse_table_data_encoding, &ret, ENC_ASCII);
+	format = parse_scpi_enum(fields[i++], parse_table_data_format, &ret, FMT_RI);
+	ordering = parse_scpi_enum(fields[i++], parse_table_data_ordering, &ret, ORDER_LSB);
 	devc->wavepre.num_pts = parse_scpi_int(fields[i++], &ret, -1);
-	const char* wfid = parse_scpi_string(fields[i++], &ret);
-	enum TEK_POINT_FORMAT pt_format = parse_scpi_enum(fields[i++], parse_table_point_format, &ret, PT_FMT_Y);
+	wfid = parse_scpi_string(fields[i++], &ret);
+	pt_format = parse_scpi_enum(fields[i++], parse_table_point_format, &ret, PT_FMT_Y);
 	devc->wavepre.x_incr = parse_scpi_float(fields[i++], &ret, 1);
-	int pt_off = parse_scpi_int(fields[i++], &ret, 0); // always zero, parsed only for completeness
+	pt_off = parse_scpi_int(fields[i++], &ret, 0); // always zero, parsed only for completeness
 	devc->wavepre.x_zero = parse_scpi_float(fields[i++], &ret, 0);
 	devc->wavepre.x_unit = parse_scpi_enum(sr_scpi_unquote_string(fields[i++]), parse_table_xunits, &ret, XU_SECOND);
 	devc->wavepre.y_mult = parse_scpi_float(fields[i++], &ret, 0);
@@ -484,9 +485,12 @@ YUNit <QString>;
 	devc->wavepre.y_off = parse_scpi_float(fields[i++], &ret, 0);
 	devc->wavepre.y_unit = parse_scpi_enum(sr_scpi_unquote_string(fields[i++]), parse_table_yunits, &ret, YU_UNKNOWN);
 	//int blocklength = parse_scpi_blockstart(fields[i++], &ret);
-	sr_dbg("Expected 17 indexes, parsed %d in header with %i", i, ret);
 
-	sr_dbg("Line is parsed as: %d;%d;%s;%s;%s;%i;\"%s\";%s;%.2e;%i;%.2e;\"%s\";%.2e;%.2e;%.2e;\"%s\"; ",
+	sr_dbg("Expected 16 values, parsed %d in header with ret=%i", i, ret);
+
+	// expensive, so avoid
+	if (sr_log_loglevel_get() >= SR_LOG_SPEW)
+	sr_spew("Line is parsed as: %d;%d;%s;%s;%s;%i;\"%s\";%s;%.2e;%i;%.2e;\"%s\";%.2e;%.2e;%.2e;\"%s\"; ",
 		byte_width, bit_width, 
 		render_scpi_enum(encoding, parse_table_data_encoding, &ret),
 		render_scpi_enum(format, parse_table_data_format, &ret),
@@ -709,14 +713,13 @@ SR_PRIV int tektronix_ocp2k5_get_dev_cfg_horizontal(const struct sr_dev_inst *sd
 {
 	struct dev_context *devc;
 	float fvalue;
+	int memory_depth;
 
 	devc = sdi->priv;
 
 	/* Get the timebase. */
 	if (sr_scpi_get_float(sdi->conn, "hor:sca?", &devc->timebase) != SR_OK)
 		return SR_ERR;
-
-	int memory_depth;
 
 	if (sr_scpi_get_int(sdi->conn, "hor:reco?", &memory_depth) != SR_OK)
 		return SR_ERR;
