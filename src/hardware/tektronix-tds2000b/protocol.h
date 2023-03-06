@@ -70,6 +70,8 @@ struct device_spec {
 
 /* Values that are the same for all models */
 #define TEK_BUFFER_SIZE 2500
+// all scopes have -5 to +5 hdivs
+// and -4 to +4 vdivs
 #define TEK_NUM_HDIV 10
 #define TEK_NUM_VDIV 8
 #define MAX_ANALOG_CHANNELS 4
