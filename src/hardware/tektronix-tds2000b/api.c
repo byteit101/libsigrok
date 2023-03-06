@@ -25,7 +25,7 @@
 #include "protocol.h"
 #include "scpi.h"
 
-static struct sr_dev_driver tektronix_tds2000b_driver_info;
+static struct sr_dev_driver tektronix_ocp2k5_driver_info;
 
 
 /**
@@ -385,7 +385,7 @@ static struct sr_dev_inst *probe_device(struct sr_scpi_dev_inst *scpi)
 	sdi->version = g_strdup(hw_info->firmware_version);
 	sdi->serial_num = g_strdup(hw_info->serial_number);
 	sdi->conn = scpi;
-	sdi->driver = &tektronix_tds2000b_driver_info;
+	sdi->driver = &tektronix_ocp2k5_driver_info;
 	sdi->inst_type = SR_INST_SCPI;
 
 	devc = g_malloc0(sizeof(*devc));
@@ -903,9 +903,9 @@ static int dev_acquisition_stop(struct sr_dev_inst *sdi)
 	return SR_OK;
 }
 
-static struct sr_dev_driver tektronix_tds2000b_driver_info = {
+static struct sr_dev_driver tektronix_ocp2k5_driver_info = {
 	// the protocol isn't really called this, but it's the
-	// best way I can think to conver all the scopes supported
+	// best way I can think to cover all the scopes supported
 	.name = "tektronix-ocp2k5",
 	.longname = "Tektronix Oscilloscope Control Protocol 2k5",
 	.api_version = 1,
@@ -923,4 +923,4 @@ static struct sr_dev_driver tektronix_tds2000b_driver_info = {
 	.dev_acquisition_stop = dev_acquisition_stop,
 	.context = NULL,
 };
-SR_REGISTER_DEV_DRIVER(tektronix_tds2000b_driver_info);
+SR_REGISTER_DEV_DRIVER(tektronix_ocp2k5_driver_info);

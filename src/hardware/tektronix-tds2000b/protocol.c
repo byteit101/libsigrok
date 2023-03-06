@@ -159,6 +159,7 @@ SR_PRIV int tektronix_ocp2k5_receive(int fd, int revents, void *cb_data)
 			sdi->driver->dev_acquisition_stop(sdi);
 			return TRUE;
 		}
+		sr_dbg("Received block: %d bytes.", len);
 		sr_dbg("Requesting balance: %d bytes.", TEK_BUFFER_SIZE + 1);
 		len = sr_scpi_read_data(scpi, (char *)devc->buffer, TEK_BUFFER_SIZE + 1);
 		if (len == -1) {
@@ -167,6 +168,7 @@ SR_PRIV int tektronix_ocp2k5_receive(int fd, int revents, void *cb_data)
 			sdi->driver->dev_acquisition_stop(sdi);
 			return TRUE;
 		}
+		sr_dbg("Received block: %d bytes.", len);
 		devc->num_block_read = len;
 
 		while (devc->num_block_read < TEK_BUFFER_SIZE + 1) {
@@ -282,6 +284,14 @@ SR_PRIV int tektronix_ocp2k5_channel_start(const struct sr_dev_inst *sdi)
 	if (sr_scpi_send(sdi->conn, "DAT:SOU CH%d",
 		ch->index + 1) != SR_OK)
 			return SR_ERR;
+		
+	char* out;
+	if (sr_scpi_get_string(sdi->conn, "dat:sou?", &out) != SR_OK)
+	{
+		sr_dbg("FOund out: %s", out);
+		return SR_ERR;
+	}
+		sr_dbg("good out out: %s", out);
 
 	// wait for trigger (asynchronous)
 	if (devc->acquire_status == WAIT_CAPTURE&& (devc->num_frames > 0 || devc->capture_mode == CAPTURE_LIVE || devc->capture_mode == CAPTURE_ONE_SHOT || devc->prior_state_running))
@@ -702,10 +712,6 @@ SR_PRIV int tektronix_ocp2k5_get_dev_cfg_horizontal(const struct sr_dev_inst *sd
 
 	devc = sdi->priv;
 
-	// all scopes have -5 to +5 hdivs
-	// and -4 to +4 vdivs
-
-
 	/* Get the timebase. */
 	if (sr_scpi_get_float(sdi->conn, "hor:sca?", &devc->timebase) != SR_OK)
 		return SR_ERR;
@@ -714,15 +720,18 @@ SR_PRIV int tektronix_ocp2k5_get_dev_cfg_horizontal(const struct sr_dev_inst *sd
 
 	if (sr_scpi_get_int(sdi->conn, "hor:reco?", &memory_depth) != SR_OK)
 		return SR_ERR;
-
-	// TODO: check memory_depth == 2500	
+	
+	if (memory_depth != TEK_BUFFER_SIZE) {
+		sr_err("A Tek 2k5 device should have that much memory. Expecting: 2500 bytes, found %d bytes", memory_depth);
+		return SR_ERR;
+	}
 
 	sr_dbg("Current timebase: %g.", devc->timebase);
 	fvalue = TEK_BUFFER_SIZE  / (devc->timebase * (float)TEK_NUM_HDIV);
 	if (devc->model->sample_rate * 1000000.0 < fvalue)
-		sr_dbg("Current samplerate: %,fSa/s (limited by device).", devc->model->sample_rate * 1000000.0);
+		sr_dbg("Current samplerate: %i MSa/s (limited by device).", devc->model->sample_rate);
 	else
-		sr_dbg("Current samplerate: %,fSa/s.", fvalue);
+		sr_dbg("Current samplerate: %ld Sa/s.", (long)fvalue);
 	sr_dbg("Current memory depth: %d.", TEK_BUFFER_SIZE);// TODO: peak detect mode is half of this
 
 	return SR_OK;
