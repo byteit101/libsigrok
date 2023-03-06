@@ -33,7 +33,7 @@ static struct sr_dev_driver tektronix_ocp2k5_driver_info;
  * and is referred to as "doc page $PDF_PAGE/$PRINTED_PAGE"
  */
 
-static const uint32_t scanopts[] = {SR_CONF_CONN};
+static const uint32_t scanopts[] = {SR_CONF_CONN, SR_CONF_SERIALCOMM};
 
 static const uint32_t drvopts[] = {SR_CONF_OSCILLOSCOPE};
 /**
@@ -51,6 +51,7 @@ static const uint32_t devopts[] = {
 	SR_CONF_TRIGGER_SLOPE | SR_CONF_GET | SR_CONF_SET | SR_CONF_LIST,
 	SR_CONF_TRIGGER_LEVEL | SR_CONF_GET | SR_CONF_SET,
 	SR_CONF_HORIZ_TRIGGERPOS | SR_CONF_GET | SR_CONF_SET,
+	SR_CONF_CAPTURE_RATIO | SR_CONF_GET | SR_CONF_SET,
 	SR_CONF_NUM_HDIV | SR_CONF_GET,
 	SR_CONF_SAMPLERATE | SR_CONF_GET,
 	SR_CONF_LIMIT_FRAMES | SR_CONF_GET | SR_CONF_SET,
@@ -64,6 +65,8 @@ static const uint32_t devopts[] = {
 
 	// SR_CONF_LIMIT_SAMPLES? (could be here or per-channel, but
         // realistically, 2.5k samples isn't going to overwhelm anyone)
+
+		// TODO: voltage threshold?
 };
 
 /**
@@ -536,6 +539,9 @@ static int config_get(uint32_t key, GVariant **data,
 	case SR_CONF_HORIZ_TRIGGERPOS:
 		*data = g_variant_new_double(devc->horiz_triggerpos);
 		break;
+	case SR_CONF_CAPTURE_RATIO:
+		*data = g_variant_new_uint64(devc->horiz_triggerpos * 100);
+		break;
 	case SR_CONF_TIMEBASE:
 		for (i = devc->model->timebase_start;
 			i < ARRAY_SIZE(timebases) - devc->model->timebase_stop;
@@ -650,12 +656,16 @@ static int config_set(uint32_t key, GVariant *data,
 			(trigger_slopes[idx][0] == 'r') ? "RISE" : "FALL");
 		return tektronix_ocp2k5_config_set(
 			sdi, "TRIG:MAI:EDGE:SLO %s", devc->trigger_slope);
-	case SR_CONF_HORIZ_TRIGGERPOS:
-		t_dbl = g_variant_get_double(data);
+	case SR_CONF_CAPTURE_RATIO:
+		t_dbl = g_variant_get_uint64(data) / 100.0;
 		if (t_dbl < 0.0 || t_dbl > 1.0) {
 			sr_err("Invalid horiz. trigger position: %g.", t_dbl);
 			return SR_ERR;
 		}
+		/* Fall through */
+	case SR_CONF_HORIZ_TRIGGERPOS:
+		if (key == SR_CONF_HORIZ_TRIGGERPOS)
+			t_dbl = g_variant_get_double(data);
 		devc->horiz_triggerpos = t_dbl;
 		/* We have the trigger offset as a percentage of the frame, but
 		 * need to express this in seconds. */

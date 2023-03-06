@@ -130,16 +130,7 @@ SR_PRIV int tektronix_ocp2k5_receive(int fd, int revents, void *cb_data)
 		// eventually starts sending it our way
 		devc->num_block_read = 0;
 
-		sr_dbg("Requesting: %d bytes.", TEK_BUFFER_SIZE + 1 + 1 + 1 + 4);
-		len = sr_scpi_read_data(scpi, (char *)devc->buffer, 6); // TODO: fix
-		if (len == -1) {
-			sr_err("Read error, aborting capture.");
-			std_session_send_df_frame_end(sdi);
-			sdi->driver->dev_acquisition_stop(sdi);
-			return TRUE;
-		}
-		sr_dbg("Received block: %d bytes.", len);
-		sr_dbg("Requesting balance: %d bytes.", TEK_BUFFER_SIZE + 1);
+		sr_dbg("Requesting block: %d bytes.", TEK_BUFFER_SIZE + 1);
 		len = sr_scpi_read_data(
 			scpi, (char *)devc->buffer, TEK_BUFFER_SIZE + 1);
 		if (len == -1) {
@@ -200,7 +191,7 @@ SR_PRIV int tektronix_ocp2k5_receive(int fd, int revents, void *cb_data)
 		sr_analog_init(&analog, &encoding, &meaning, &spec, digits);
 		analog.meaning->channels = g_slist_append(NULL, ch);
 		analog.num_samples = float_data->len;
-		analog.data = (float *)float_data->data;
+		analog.data = ((float *)float_data->data);
 		if (devc->wavepre.y_unit == YU_VOLTS) {
 			analog.meaning->mq = SR_MQ_VOLTAGE;
 			analog.meaning->unit = SR_UNIT_VOLT;
@@ -217,7 +208,28 @@ SR_PRIV int tektronix_ocp2k5_receive(int fd, int revents, void *cb_data)
 		analog.meaning->mqflags = 0;
 		packet.type = SR_DF_ANALOG;
 		packet.payload = &analog;
-		sr_session_send(sdi, &packet);
+		sr_dbg("Computing using trigger point %.6f", devc->horiz_triggerpos);
+		// only the first packet provides trigger information, all others
+		// are "after" the correct timebase
+		if (devc->channel_entry != devc->enabled_channels) {
+			sr_session_send(sdi, &packet);
+		} else if (devc->horiz_triggerpos > 0) {
+			// This will round to (potentially) twice the expected margin 
+			// on-device (% -> s -> %) vs our expectation (%)
+			analog.num_samples = float_data->len * devc->horiz_triggerpos;
+			sr_dbg("First batch has %d", analog.num_samples);
+			sr_session_send(sdi, &packet);
+			std_session_send_df_trigger(sdi);
+			if (devc->horiz_triggerpos < 1) {
+				analog.data = ((float *)float_data->data) + analog.num_samples;
+				analog.num_samples = float_data->len - analog.num_samples;
+				sr_dbg("second batch has %d", analog.num_samples);
+				sr_session_send(sdi, &packet);
+			}
+		} else { // trigger == 0
+			std_session_send_df_trigger(sdi);
+			sr_session_send(sdi, &packet);
+		}
 		g_slist_free(analog.meaning->channels);
 		g_array_free(data, TRUE);
 
@@ -392,6 +404,26 @@ static const char *render_scpi_enum(
 	*out_err = SR_ERR_DATA;
 	return "NULL";
 }
+static int parse_scpi_blockstart(const char *data, int *out_err)
+{
+	int len, i;
+	int ret = 0;
+	if (data[0] != '#' || data[1] < '0' || data[1] > '9') {
+		sr_err("block header invalid: %.2s",
+			data);
+		goto err;
+	}
+	len = data[1] - '0';
+	for(i = 0; i < len; ++i) {
+		if (data[2+i] < '0' || data[2+i] > '9')
+			goto err;
+		ret = ret * 10 + (data[2+i] - '0');
+	}
+	return ret;
+err:
+	*out_err = SR_ERR_DATA;
+	return -1;
+}
 
 static int tektronix_ocp2k5_parse_header(struct sr_dev_inst *sdi, char *end_buf)
 {
@@ -405,6 +437,7 @@ static int tektronix_ocp2k5_parse_header(struct sr_dev_inst *sdi, char *end_buf)
 	const char *wfid;
 	int bit_width;
 	int byte_width;
+	int blocklength;
 	enum TEK_POINT_FORMAT pt_format;
 	enum TEK_DATA_ORDERING ordering;
 	enum TEK_DATA_FORMAT format;
@@ -472,15 +505,15 @@ static int tektronix_ocp2k5_parse_header(struct sr_dev_inst *sdi, char *end_buf)
 	devc->wavepre.y_off = parse_scpi_float(fields[i++], &ret, 0);
 	devc->wavepre.y_unit = parse_scpi_enum(sr_scpi_unquote_string(fields[i++]),
 		parse_table_yunits, &ret, YU_UNKNOWN);
-	// int blocklength = parse_scpi_blockstart(fields[i++], &ret);
+	blocklength = parse_scpi_blockstart(fields[i++], &ret);
 
-	sr_dbg("Expected 16 values, parsed %d in header with ret=%i", i, ret);
-	if (i != TEK_PRE_HEADER_FIELDS && ret == SR_OK)
+	sr_dbg("Expected 17 values, parsed %d in header with ret=%i", i, ret);
+	if (i != TEK_PRE_HEADER_FIELDS + 1 && ret == SR_OK)
 		ret = SR_ERR;
 
 	// expensive, so avoid
 	if (sr_log_loglevel_get() >= SR_LOG_SPEW)
-		sr_spew("Line is parsed as: %d;%d;%s;%s;%s;%i;\"%s\";%s;%.2e;%i;%.2e;\"%s\";%.2e;%.2e;%.2e;\"%s\"; ",
+		sr_spew("Line is parsed as: %d;%d;%s;%s;%s;%i;\"%s\";%s;%.2e;%i;%.2e;\"%s\";%.2e;%.2e;%.2e;\"%s\";#.%d... ",
 			byte_width, bit_width,
 			render_scpi_enum(encoding, parse_table_data_encoding, &ret),
 			render_scpi_enum(format, parse_table_data_format, &ret),
@@ -493,7 +526,8 @@ static int tektronix_ocp2k5_parse_header(struct sr_dev_inst *sdi, char *end_buf)
 			devc->wavepre.y_mult, devc->wavepre.y_zero,
 			devc->wavepre.y_off,
 			render_scpi_enum(devc->wavepre.y_unit,
-				parse_table_yunits, &ret));
+				parse_table_yunits, &ret),
+			blocklength);
 	return ret;
 }
 
@@ -518,7 +552,7 @@ static int tektronix_ocp2k5_read_header(struct sr_dev_inst *sdi)
 		/* Read header from device. */
 		ret = sr_scpi_read_data(scpi, buf, attempt);
 		if (ret < attempt) {
-			sr_err("Read error while reading data header. true: %i of %i",
+			sr_err("Read error while reading data header: %i of %i",
 				ret, attempt);
 			return SR_ERR;
 		}
@@ -531,6 +565,29 @@ static int tektronix_ocp2k5_read_header(struct sr_dev_inst *sdi)
 		if (attempt > 1)
 			attempt *= 2;
 	}
+
+	// read block header prefix (# + <digit>)
+	ret = sr_scpi_read_data(scpi, buf, 2);
+	if (ret < 2) {
+		sr_err("Read error while reading block header: %i of %i",
+			ret, 2);
+		return SR_ERR;
+	}
+	if (buf[0] != '#' || buf[1] < '0' || buf[1] > '9') {
+		sr_err("block header invalid: %.2s",
+			buf);
+		return SR_ERR;
+	}
+	attempt = buf[1] - '0';
+	buf+=2;
+	// read block header size
+	ret = sr_scpi_read_data(scpi, buf, attempt);
+	if (ret < attempt) {
+		sr_err("Read error while reading block header: %i of %i",
+			ret, attempt);
+		return SR_ERR;
+	}
+	buf +=attempt;
 
 	if (tektronix_ocp2k5_parse_header(sdi, buf + 1) != SR_OK)
 		ret = -1;
