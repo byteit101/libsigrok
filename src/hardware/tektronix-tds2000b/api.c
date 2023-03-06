@@ -39,8 +39,6 @@ static const uint32_t drvopts[] = {SR_CONF_OSCILLOSCOPE};
 /**
  * TODOS
  *
- * "properly" parse block arg
- * Test compensation
  * General cleanup
  * current options?
  */
@@ -86,7 +84,9 @@ static const uint32_t devopts_cg_analog[] = {
 	// Is SR_CONF_CHANNEL_CONFIG how "advanced" features are supported?
 };
 
-// TODO: fixup for compensation?
+// TODO: Compensation adjusts the vdivs, and I implemented a semi-proper
+// configuration of that, but it  wasn't ideal, so for now
+// all possible compensation vdivs are present
 
 // TODO: allow fine adjust
 // validated in doc page 75/2-57
@@ -104,6 +104,18 @@ static const uint64_t vdivs[][2] = {
 	{1, 1},
 	{2, 1},
 	{5, 1},
+	/* >1x compensation only */
+	{10, 1},
+	{20, 1},
+	{50, 1},
+	/* >10x compensation only */
+	{100, 1},
+	{200, 1},
+	{500, 1},
+	/* >100x compensation only */
+	{1000, 1},
+	{2000, 1},
+	{5000, 1},
 };
 
 // everyone uses the same voltrange
