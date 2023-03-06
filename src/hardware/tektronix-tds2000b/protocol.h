@@ -111,6 +111,25 @@ enum TEK_Y_UNITS {
 	YU_AA
 };
 
+// Must be in same order as the strings
+enum DRIVER_CAPTURE_MODE {
+	CAPTURE_LIVE, // reset trigger, clear
+	CAPTURE_ONE_SHOT, // reset trigger, no clear
+	CAPTURE_DISPLAY, // no reset, clear
+	CAPTURE_MEMORY, // no reset, no clear
+};
+
+
+enum wait_events {
+	WAIT_CAPTURE,
+	WAIT_CHANNEL,
+	WAIT_DONE,
+};
+
+struct tek_enum_parser {
+	int enum_value;
+	const char* name;
+};
 
 struct most_recent_wave_preamble {
 	//For Y format, the time (absolute coordinate) of a point, relative to the trigger, can
@@ -153,8 +172,15 @@ struct dev_context {
 	float trigger_level;
 	int average_samples;
 	gboolean average_enabled;
+	gboolean peak_enabled;
+
+	enum wait_events acquire_status;
 
 	struct most_recent_wave_preamble wavepre;
+	enum DRIVER_CAPTURE_MODE capture_mode;
+
+	gboolean prior_state_running;
+	gboolean prior_state_single;
 
 	uint64_t limit_frames;
 	/* Acquisition settings */
@@ -173,6 +199,7 @@ SR_PRIV int tek_tds2000b_config_set(const struct sr_dev_inst *sdi,
 	const char *format, ...);
 SR_PRIV int tek_tds2000b_capture_start(const struct sr_dev_inst *sdi);
 SR_PRIV int tek_tds2000b_channel_start(const struct sr_dev_inst *sdi);
+SR_PRIV int tek_tds2000b_capture_finish(const struct sr_dev_inst *sdi);
 SR_PRIV int tek_tds2000b_receive(int fd, int revents, void *cb_data);
 SR_PRIV int tek_tds2000b_get_dev_cfg(const struct sr_dev_inst *sdi);
 SR_PRIV int tek_tds2000b_get_dev_cfg_vertical(const struct sr_dev_inst *sdi);

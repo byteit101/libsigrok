@@ -30,11 +30,6 @@
 #include "protocol.h"
 
 
-struct tek_enum_parser {
-	int enum_value;
-	const char* name;
-};
-
 static const struct tek_enum_parser parse_table_data_encoding[] = {
 	{ ENC_ASCII, "ASC" },
 	{ ENC_BINARY, "BIN" },
@@ -76,6 +71,29 @@ static const struct tek_enum_parser parse_table_yunits[] = {
 
 static int tek_tds2000b_read_header(struct sr_dev_inst *sdi);
 
+/* Revert all settings, if requested. */
+SR_PRIV int tek_tds2000b_capture_finish(const struct sr_dev_inst *sdi)
+{
+	struct dev_context *devc;
+
+	if (!(devc = sdi->priv))
+		return SR_ERR;
+
+	devc->acquire_status = WAIT_DONE;
+
+	sr_dbg("Setting exiting setttings back");
+
+	if (devc->capture_mode == CAPTURE_LIVE || devc->capture_mode == CAPTURE_DISPLAY) {
+		if (tek_tds2000b_config_set(sdi, "ACQ:stopa runstop") != SR_OK)
+			return SR_ERR;
+		
+		if (tek_tds2000b_config_set(sdi, "ACQ:STATE RUN") != SR_OK)
+			return SR_ERR;
+	}
+
+	return SR_OK;
+}
+
 SR_PRIV int tek_tds2000b_receive(int fd, int revents, void *cb_data)
 {
 	struct sr_dev_inst *sdi;
@@ -89,7 +107,6 @@ SR_PRIV int tek_tds2000b_receive(int fd, int revents, void *cb_data)
 	struct sr_analog_spec spec;
 	struct sr_channel *ch;
 	int len, i;
-	float wait;
 
 	(void)fd;
 
@@ -103,21 +120,10 @@ SR_PRIV int tek_tds2000b_receive(int fd, int revents, void *cb_data)
 	scpi = sdi->conn;
 	ch = devc->channel_entry->data;
 
-		sr_err("Doing receive %d.", revents);
-
 	if (revents == G_IO_IN || TRUE) { // this is always 0 for some reason
-		/* TODO */
 	
-		sr_err("Doing receive Good.");
-
-
-
-//	if (devc->num_block_bytes == 0) {
-		/* Wait for the device to fill its output buffers. */
-		/* The older models need more time to prepare the the output buffers due to CPU speed. */
-		wait = (2500 * 2.5);
-		sr_dbg("Waiting %.f0 ms for device to prepare the output buffers", wait / 1000);
-		g_usleep(wait);
+		// no data yet
+		sr_dbg("Waiting for data...");
 		if (sr_scpi_read_begin(scpi) != SR_OK)
 			return TRUE;
 		
@@ -127,25 +133,19 @@ SR_PRIV int tek_tds2000b_receive(int fd, int revents, void *cb_data)
 		if (len == 0)
 			/* Still reading the header. */
 			return TRUE;
+		
 		if (len == -1) {
 			sr_err("Read error, aborting capture.");
 			std_session_send_df_frame_end(sdi);
 			sdi->driver->dev_acquisition_stop(sdi);
 			return TRUE;
 		}
-		//devc->num_block_bytes = len;
+
+		devc->acquire_status = WAIT_DONE;
+
+		// streaming data back is pretty fast, at least once the scope eventually starts sending it our way
 		devc->num_block_read = 0;
 
-
-		if (len == -1) {
-			sr_err("Read error, aborting capture.");
-			std_session_send_df_frame_end(sdi);
-			sdi->driver->dev_acquisition_stop(sdi);
-			return TRUE;
-		}
-		//
-
-		// sr_dbg("Requesting: %" PRIu64 " bytes.", devc->num_samples - devc->num_block_bytes);
 		sr_dbg("Requesting: %d bytes.", TEK_BUFFER_SIZE + 1+1+1+4);
 		len = sr_scpi_read_data(scpi, (char *)devc->buffer, 6);
 		if (len == -1) {
@@ -164,71 +164,75 @@ SR_PRIV int tek_tds2000b_receive(int fd, int revents, void *cb_data)
 		}
 		devc->num_block_read = len;
 
-			while (devc->num_block_read < TEK_BUFFER_SIZE + 1) {
-				/* We received all data as one block. */
-				/* Offset the data block buffer past the IEEE header and description header. */
-				// devc->buffer += devc->block_header_size;
-			//} else {
-				sr_dbg("Requesting: %d bytes.", TEK_BUFFER_SIZE + 1 - devc->num_block_read);
-				len = sr_scpi_read_data(scpi, (char *)devc->buffer + devc->num_block_read, TEK_BUFFER_SIZE + 1 - devc->num_block_read);
-				if (len == -1) {
-					sr_err("Read error, aborting capture.");
-					std_session_send_df_frame_end(sdi);
-					sdi->driver->dev_acquisition_stop(sdi);
-					return TRUE;
-				}
+		while (devc->num_block_read < TEK_BUFFER_SIZE + 1) {
+			sr_dbg("Requesting: %d bytes.", TEK_BUFFER_SIZE + 1 - devc->num_block_read);
+			len = sr_scpi_read_data(scpi, (char *)devc->buffer + devc->num_block_read, TEK_BUFFER_SIZE + 1 - devc->num_block_read);
+			if (len == -1) {
+				sr_err("Read error, aborting capture.");
+				std_session_send_df_frame_end(sdi);
+				sdi->driver->dev_acquisition_stop(sdi);
+				return TRUE;
+			}
 			sr_dbg("Received block: %d bytes.", len);
-				devc->num_block_read += len;
-				// if (len == 2501 - devc->num_block_read)
-				// 	len--; //skip new line
-				// devc->num_block_bytes += len;
-			}
-				len = TEK_BUFFER_SIZE;
+			devc->num_block_read += len;
+		}
+		sr_dbg("Transfer has been completed.");
+		if (!sr_scpi_read_complete(scpi)) {
+			sr_err("Read should have been completed.");
+			std_session_send_df_frame_end(sdi);
+			sdi->driver->dev_acquisition_stop(sdi);
+			return TRUE;
+		}
+		
+		// We have received the entire 2.5k buffer now, so process it, ignoring the trailing \n
+		len = TEK_BUFFER_SIZE;
 
-				float vdiv = devc->vdiv[ch->index];
-				GArray *float_data;
-				static GArray *data;
-				float voltage, vdivlog;
-				int digits;
+		float vdiv = devc->vdiv[ch->index];
+		GArray *float_data;
+		static GArray *data;
+		float voltage, vdivlog;
+		int digits;
 
-				data = g_array_sized_new(FALSE, FALSE, sizeof(uint8_t), len);
-				g_array_append_vals(data, devc->buffer, len);
-				float_data = g_array_new(FALSE, FALSE, sizeof(float));
-				for (i = 0; i < len; i++) {
-					voltage = (float)g_array_index(data, int8_t, i) - devc->wavepre.y_off;
-					voltage = ((devc->wavepre.y_mult * voltage) + devc->wavepre.y_zero);
-					g_array_append_val(float_data, voltage);
-				}
-				vdivlog = log10f(vdiv);
-				digits = -(int) vdivlog + (vdivlog < 0.0);
-				sr_analog_init(&analog, &encoding, &meaning, &spec, digits);
-				analog.meaning->channels = g_slist_append(NULL, ch);
-				analog.num_samples = float_data->len;
-				analog.data = (float *)float_data->data;
-				analog.meaning->mq = SR_MQ_VOLTAGE;
-				analog.meaning->unit = SR_UNIT_VOLT;
-				analog.meaning->mqflags = 0;
-				packet.type = SR_DF_ANALOG;
-				packet.payload = &analog;
-				sr_session_send(sdi, &packet);
-				g_slist_free(analog.meaning->channels);
-				g_array_free(data, TRUE);
-			len = 0;
-			if (devc->num_block_read >= 2500) {
-				sr_dbg("Transfer has been completed.");
-			//	devc->num_header_bytes = 0;
-			//	devc->num_block_bytes = 0;
-				if (!sr_scpi_read_complete(scpi)) {
-					sr_err("Read should have been completed.");
-					std_session_send_df_frame_end(sdi);
-					sdi->driver->dev_acquisition_stop(sdi);
-					return TRUE;
-				}
-				devc->num_block_read = 0;
-			} else {
-				sr_dbg("%d of %d block bytes read.",
-					devc->num_block_read, 2501);
-			}
+		data = g_array_sized_new(FALSE, FALSE, sizeof(uint8_t), len);
+		g_array_append_vals(data, devc->buffer, len);
+		float_data = g_array_new(FALSE, FALSE, sizeof(float));
+		for (i = 0; i < len; i++) {
+			voltage = (float)g_array_index(data, int8_t, i) - devc->wavepre.y_off;
+			voltage = ((devc->wavepre.y_mult * voltage) + devc->wavepre.y_zero);
+			g_array_append_val(float_data, voltage);
+		}
+		vdivlog = log10f(vdiv);
+		digits = -(int) vdivlog + (vdivlog < 0.0);
+		sr_analog_init(&analog, &encoding, &meaning, &spec, digits);
+		analog.meaning->channels = g_slist_append(NULL, ch);
+		analog.num_samples = float_data->len;
+		analog.data = (float *)float_data->data;
+		if (devc->wavepre.y_unit == YU_VOLTS)
+		{
+			analog.meaning->mq = SR_MQ_VOLTAGE;
+			analog.meaning->unit = SR_UNIT_VOLT;
+		}
+		else if (devc->wavepre.y_unit == YU_AMPS)
+		{
+			analog.meaning->mq= SR_MQ_CURRENT;
+			analog.meaning->unit = SR_UNIT_AMPERE;
+		}
+		else if (devc->wavepre.y_unit == YU_DECIBELS)
+		{
+			analog.meaning->mq= SR_MQ_POWER;
+			analog.meaning->unit = SR_UNIT_DECIBEL_MW;
+		}
+		else
+		{
+			analog.meaning->mq= 0;
+			analog.meaning->unit = SR_UNIT_UNITLESS;
+		}
+		analog.meaning->mqflags = 0;
+		packet.type = SR_DF_ANALOG;
+		packet.payload = &analog;
+		sr_session_send(sdi, &packet);
+		g_slist_free(analog.meaning->channels);
+		g_array_free(data, TRUE);
 
 		if (devc->channel_entry->next) {
 				sr_dbg("Doing another channel");
@@ -241,6 +245,7 @@ SR_PRIV int tek_tds2000b_receive(int fd, int revents, void *cb_data)
 			if (++devc->num_frames == devc->limit_frames) {
 				/* Last frame, stop capture. */
 				sdi->driver->dev_acquisition_stop(sdi);
+				tek_tds2000b_capture_finish(sdi);
 			} else {
 				sr_dbg("Doing another frame");
 				/* Get the next frame, starting with the first channel. */
@@ -267,17 +272,21 @@ SR_PRIV int tek_tds2000b_channel_start(const struct sr_dev_inst *sdi)
 
 	ch = devc->channel_entry->data;
 
-	sr_dbg("Start reading data from channel %s.", ch->name);
+	sr_dbg("Configure reading data from channel %s.", ch->name);
 
 	if (sr_scpi_send(sdi->conn, "DAT:SOU CH%d",
 		ch->index + 1) != SR_OK)
 			return SR_ERR;
 
-	sr_dbg("Starting wfm");
+	// wait for trigger (asynchronous)
+	if (devc->acquire_status == WAIT_CAPTURE&& (devc->num_frames > 0 || devc->capture_mode == CAPTURE_LIVE || devc->capture_mode == CAPTURE_ONE_SHOT || devc->prior_state_running))
+		if (sr_scpi_send(sdi->conn, "*WAI") != SR_OK)
+				return SR_ERR;
+	devc->acquire_status = WAIT_CHANNEL;
+
+	sr_dbg("Requesting waveform");
 	if (sr_scpi_send(sdi->conn, "WAVF?") != SR_OK)
 			return SR_ERR;
-
-	sr_dbg("trigger wfm");
 
 	devc->num_block_read = 0;
 
@@ -292,38 +301,40 @@ SR_PRIV int tek_tds2000b_capture_start(const struct sr_dev_inst *sdi)
 	if (!(devc = sdi->priv))
 		return SR_ERR;
 
-		// TODO: one shot vs stopped vs continuous vs ... mode
+	// Force our capture settings to 1 byte, msb, binary
+	if (tek_tds2000b_config_set(sdi, "dat:enc RIB") != SR_OK)
+		return SR_ERR;
+	if (tek_tds2000b_config_set(sdi, "dat:wid 1") != SR_OK)
+		return SR_ERR;
 
-	/**
-	 * 
-	 *	dat:enc = bin...?
-	 *	dat:wid = 1
-	 * run
-	 * 
-	 * for each channel
-	 * {
-	 * 		dat:sou = CH<x>
-	 * 		*wai / *opp?
-	 *      CURV?
-	 * 		WFMPre?
-	 * }
-	*/
-	unsigned int framecount;
-	
+
+	devc->acquire_status = WAIT_CAPTURE;
+
+	if (devc->num_frames == 0) {
+		// if we aren't requesting memory, create a new capture
+		// if we are requesting memory, but it was already running, convert to single-shot so we can synchronize channels
+		if (devc->capture_mode == CAPTURE_LIVE || devc->capture_mode == CAPTURE_ONE_SHOT || devc->prior_state_running) {
+			sr_dbg("Triggering restart");
+			// stop before setting single sequence mode, so that we can get the same waveform data per channel
+			if (!devc->prior_state_single) {
+				if (tek_tds2000b_config_set(sdi, "ACQ:STATE STOP") != SR_OK)
+					return SR_ERR;
+				if (tek_tds2000b_config_set(sdi, "ACQ:stopa seq") != SR_OK)
+					return SR_ERR;
+			}
+			if (tek_tds2000b_config_set(sdi, "ACQ:STATE RUN") != SR_OK)
+				return SR_ERR;
+		}
+	} else {
+		// If you are requesting multiple frames, all capture modes reset
+		if (tek_tds2000b_config_set(sdi, "ACQ:STATE RUN") != SR_OK)
+			return SR_ERR;
+	}
 
 	if (tek_tds2000b_channel_start(sdi) != SR_OK)
 		return SR_ERR;
 
 	sr_dbg("Starting data capture for curves.");
-	// if (tek_tds2000b_config_set(sdi, "WAVF?") != SR_OK)
-	// 	return SR_ERR;
-	
-	// ret = sr_scpi_read_data(sdi->conn, buf, 200);
-	// if (ret < 0) {
-	// 	sr_err("Read error while reading data header.");
-	// 	return SR_ERR;
-	// }
-	// tek_tds2000b_set_wait_event(devc, WAIT_STOP);
 
 	return SR_OK;
 }
@@ -400,6 +411,7 @@ static int tek_tds2000b_parse_header(struct sr_dev_inst *sdi, char* end_buf)
 	char *fields[17]; // one extra for block ()
 	int i = 0;
 	int ret = SR_OK;
+	(void)scpi;
 
 	sr_dbg("Parsing buffer of size %d", (int)(end_buf - buf));
 	sr_dbg("Line as recved as: %.*s", (int)(end_buf - buf - 1), buf);
@@ -483,51 +495,34 @@ static int tek_tds2000b_read_header(struct sr_dev_inst *sdi)
 	char *buf = (char *)devc->buffer;
 	int ret;
 
-	// header is variable, but at least 100 bytes, and likely no more than 175 bytes
-
-
-
-// 16 args, ignore all for now TODO: !!
-int attempt = 100;
-int found = 0;
-	while (found < 16) 
-
-	{
-
-	sr_dbg("Device searching %i semis.", found);
-	/* Read header from device. */
-	ret = sr_scpi_read_data(scpi, buf, attempt);
-	if (ret < attempt) {
-		sr_err("Read error while reading data header. true: %i of %i", ret, attempt);
-		return SR_ERR;
-	}
-	sr_dbg("Device searching et = %d .", ret);
-	for (int i = 0; i < ret; i++, buf++){
-		if (*buf == ';')
-		{
-			found++;
+	// header is variable, but at least 100 bytes, and likely no more than 175 bytes. Typical values are around 150
+	
+	int attempt = 100;
+	int found = 0;
+	
+	// Find all 16 fields by locating their semicolons. 
+	// In theory the string values could contain semicolons to throw us off
+	// but I think we are safe based on the docs
+	while (found < 16) {
+		/* Read header from device. */
+		ret = sr_scpi_read_data(scpi, buf, attempt);
+		if (ret < attempt) {
+			sr_err("Read error while reading data header. true: %i of %i", ret, attempt);
+			return SR_ERR;
 		}
+		for (int i = 0; i < ret; i++, buf++) {
+			if (*buf == ';')
+			{
+				found++;
+			}
+		}
+		attempt = 16 - found;
+		if (attempt > 1)
+			attempt *=2;
 	}
-	attempt = 16 - found;
-	if (attempt > 1)
-		attempt *=2;
-}
-	sr_dbg("Device returned %i bytes.", ret);
-	//ret = 
+
 	if (tek_tds2000b_parse_header(sdi, buf+1) != SR_OK)
 		ret = -1;
-	// devc->num_header_bytes += ret;
-	// buf += block_offset; /* Skip to start descriptor block. */
-
-	// /* Parse WaveDescriptor header. */
-	// memcpy(&desc_length, buf + 36, 4); /* Descriptor block length */
-	// memcpy(&data_length, buf + 60, 4); /* Data block length */
-
-	// devc->block_header_size = desc_length + 15;
-	// devc->num_samples = data_length;
-
-	// sr_dbg("Received data block header: -> block length %d.", ret);
-
 	return ret;
 }
 /* Send a configuration setting. */
@@ -677,11 +672,12 @@ SR_PRIV int tek_tds2000b_get_dev_cfg(const struct sr_dev_inst *sdi)
 	sr_dbg("Current trigger level: %g.", devc->trigger_level);
 
 
-	/* Averaging */
+	/* Averaging/peak detection */
 	response = NULL;
 	if (sr_scpi_get_string(sdi->conn, "acq:mod?", &response) != SR_OK)
 		return SR_ERR;
 	devc->average_enabled = g_ascii_strncasecmp(response, "average", 3) == 0;
+	devc->peak_enabled = g_ascii_strncasecmp(response, "peak", 3) == 0;
 	sr_dbg("Acquisition mode: %s.", response);
 	g_free(response);
 

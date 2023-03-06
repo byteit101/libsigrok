@@ -45,12 +45,8 @@ static const uint32_t drvopts[] = {
 /**
  * TODOS
  * 
- * Wait for trigger
- * single capture time?
  * General cleanup
- * add all supported models
- * gate model features
- * current options
+ * current options?
 */
 
 static const uint32_t devopts[] = {
@@ -65,15 +61,12 @@ static const uint32_t devopts[] = {
 	SR_CONF_AVERAGING | SR_CONF_GET | SR_CONF_SET,
 	SR_CONF_AVG_SAMPLES | SR_CONF_GET | SR_CONF_SET | SR_CONF_LIST,
 	SR_CONF_BUFFERSIZE | SR_CONF_GET,
-
-	//SR_CONF_PEAK_DETECTION?
+	SR_CONF_DATA_SOURCE | SR_CONF_GET | SR_CONF_SET | SR_CONF_LIST,
+	SR_CONF_PEAK_DETECTION | SR_CONF_GET | SR_CONF_SET,
 
 	// capturefile or session file?
 
-	// SR_CONF_DATA_SOURCE could control fresh trigger vs always live
-
-	//SR_CONF_LIMIT_SAMPLES? (could be here or per-channel)
-	//SR_CONF_CONTINUOUS?
+	//SR_CONF_LIMIT_SAMPLES? (could be here or per-channel, but realistically, 2.5k samples isn't going to overwhelm anyone)
 };
 
 /**
@@ -88,9 +81,9 @@ static const uint32_t devopts_cg_analog[] = {
 	SR_CONF_VDIV | SR_CONF_GET | SR_CONF_SET | SR_CONF_LIST,
 	SR_CONF_COUPLING | SR_CONF_GET | SR_CONF_SET | SR_CONF_LIST,
 	SR_CONF_PROBE_FACTOR | SR_CONF_GET | SR_CONF_SET | SR_CONF_LIST,
-	//SR_CONF_ENABLED
+	SR_CONF_ENABLED | SR_CONF_GET | SR_CONF_SET,
 
-	//SR_CONF_CHANNEL_CONFIG ?
+	// Is SR_CONF_CHANNEL_CONFIG how "advanced" features are supported?
 };
 
 // TODO: fixup for compensation?
@@ -212,6 +205,15 @@ enum series_support_matrix {
 	TDS224,
 	TPS_2k,
 };
+
+// Must be in same order as the enum values DRIVER_CAPTURE_MODE
+static const char *data_sources[] = {
+	[CAPTURE_LIVE] = "Live",
+	[CAPTURE_ONE_SHOT] = "One Shot",
+	[CAPTURE_DISPLAY] = "Memory+Live",
+	[CAPTURE_MEMORY] = "Memory",
+};
+
 
 // Note, CH3 and 4 should be last so that 4ch vs 2ch scopes
 // can simply truncate this list by two
@@ -390,6 +392,7 @@ static struct sr_dev_inst *probe_device(struct sr_scpi_dev_inst *scpi)
 	sdi->priv = devc;
 	devc->buffer = g_malloc(TEK_BUFFER_SIZE + 1000); // give us a buffer on our buffer
 	devc->limit_frames = 1;
+	devc->capture_mode = CAPTURE_MEMORY;
 
 	sr_scpi_hw_info_free(hw_info);
 
@@ -487,12 +490,9 @@ static int config_get(uint32_t key, GVariant **data,
 	case SR_CONF_LIMIT_FRAMES:
 		*data = g_variant_new_uint64(devc->limit_frames);
 		break;
-	// case SR_CONF_DATA_SOURCE:
-	// 	if (devc->data_source == DATA_SOURCE_SCREEN)
-	// 		*data = g_variant_new_string("Screen");
-	// 	else if (devc->data_source == DATA_SOURCE_HISTORY)
-	// 		*data = g_variant_new_string("History");
-	// 	break;
+	case SR_CONF_DATA_SOURCE:
+		*data = g_variant_new_string(data_sources[devc->capture_mode]);
+		break;
 	case SR_CONF_SAMPLERATE:
 		tek_tds2000b_get_dev_cfg_horizontal(sdi);
 		*data = g_variant_new_uint64(devc->samplerate);
@@ -568,6 +568,16 @@ static int config_get(uint32_t key, GVariant **data,
 		}
 		*data = g_variant_new_uint64(devc->attenuation[analog_channel]);
 		break;
+	case SR_CONF_ENABLED:
+		if (analog_channel < 0) {
+			sr_dbg("Negative analog channel: %d.", analog_channel);
+			return SR_ERR_NA;
+		}
+		*data = g_variant_new_boolean(devc->analog_channels[analog_channel]);
+		break;
+	case SR_CONF_PEAK_DETECTION:
+		*data = g_variant_new_boolean(devc->peak_enabled);
+		break;
 	case SR_CONF_AVERAGING:
 		*data = g_variant_new_boolean(devc->average_enabled);
 		break;
@@ -592,6 +602,7 @@ static int config_set(uint32_t key, GVariant *data,
 	const char *tmp_str;
 	char buffer[16];
 	char cmd4[4];
+	gboolean b;
 
 	devc = sdi->priv;
 
@@ -622,8 +633,7 @@ static int config_set(uint32_t key, GVariant *data,
 		devc->horiz_triggerpos = t_dbl;
 		/* We have the trigger offset as a percentage of the frame, but
 		 * need to express this in seconds. */
-		t_dbl = -(devc->horiz_triggerpos - 0.5) * devc->timebase * (10);//devc->num_timebases;
-		// g_ascii_formatd(buffer, sizeof(buffer), "%.6f", t_dbl);
+		t_dbl = -(devc->horiz_triggerpos - 0.5) * devc->timebase * (10);
 		return tek_tds2000b_config_set(sdi, "hor:mai:pos %.3e", t_dbl);
 	case SR_CONF_TRIGGER_LEVEL:
 		if (!strcmp(devc->trigger_source, "AC Line"))
@@ -700,31 +710,39 @@ static int config_set(uint32_t key, GVariant *data,
 		if (ret == SR_OK)
 			tek_tds2000b_get_dev_cfg_vertical(sdi);
 		return ret;
-	// case SR_CONF_DATA_SOURCE:
-	// 	tmp_str = g_variant_get_string(data, NULL);
-	// 	if (!strcmp(tmp_str, "Display"))
-	// 		devc->data_source = DATA_SOURCE_SCREEN;
-	// 	else if (devc->model->series->protocol >= SPO_MODEL
-	// 		&& !strcmp(tmp_str, "History"))
-	// 		devc->data_source = DATA_SOURCE_HISTORY;
-	// 	else {
-	// 		sr_err("Unknown data source: '%s'.", tmp_str);
-	// 		return SR_ERR;
-	// 	}
-	// 	break;
-	// case SR_CONF_SAMPLERATE:
-		// ret = tek_tds2000b_config_set(sdi, "HOR:SCA %" PRIu64, g_variant_get_uint64(data));
-		// if (ret == SR_OK)
-			// tek_tds2000b_get_dev_cfg_horizontal(sdi);
-		// return ret;
+	case SR_CONF_ENABLED:
+		sr_dbg("configuring channel");
+		if (!cg)
+			return SR_ERR_CHANNEL_GROUP;
+		if ((i = std_cg_idx(cg, devc->analog_groups, devc->model->channels)) < 0)
+			return SR_ERR_ARG;
+		b = g_variant_get_boolean(data);
+			devc->analog_channels[i] = b;
+		ret = tek_tds2000b_config_set(sdi, "SEL:CH%d %s", i + 1,
+			b ? "ON" : "OFF");
+		return ret;
+	case SR_CONF_DATA_SOURCE:
+		if ((idx = std_str_idx(data, ARRAY_AND_SIZE(data_sources))) < 0)
+			return SR_ERR_ARG;
+		devc->capture_mode = idx;
+		break;
+	case SR_CONF_PEAK_DETECTION:
+		// TODO: you can configure peak detect mode, but the data isn't parsed yet
+		devc->peak_enabled = g_variant_get_boolean(data);
+		if (devc->peak_enabled)
+			ret = tek_tds2000b_config_set(sdi, "acq:mode peak");
+		else
+			ret = tek_tds2000b_config_set(sdi, "acq:mode sam");
+		devc->average_enabled = 0;
+		sr_dbg("%s peak detect", devc->peak_enabled ? "Enabling" : "Disabling");
+		break;
 	case SR_CONF_AVERAGING:
 		devc->average_enabled = g_variant_get_boolean(data);
-		// TODO: support for peakdetect mode?
 		if (devc->average_enabled)
 			ret = tek_tds2000b_config_set(sdi, "acq:mode ave");
 		else
 			ret = tek_tds2000b_config_set(sdi, "acq:mode sam");
-
+		devc->peak_enabled = 0;
 		sr_dbg("%s averaging", devc->average_enabled ? "Enabling" : "Disabling");
 		break;
 	case SR_CONF_AVG_SAMPLES:
@@ -783,31 +801,17 @@ static int config_list(uint32_t key, GVariant **data,
 		*data = std_gvar_tuple_array(&timebases[devc->model->timebase_start], ARRAY_SIZE(timebases) - devc->model->timebase_start - devc->model->timebase_stop);
 		break;
 	case SR_CONF_TRIGGER_SOURCE:
-		// if (!devc)
-		// 	/* Can't know this until we have the exact model. */
-		// 	return SR_ERR_ARG;
-		// *data = g_variant_new_strv(trigger_sources,
-		// 	devc->model->has_digital ? ARRAY_SIZE(trigger_sources) : 5);
+		if (!devc)
+			/* Can't know this until we have the exact model. */
+			return SR_ERR_ARG;
 		*data = g_variant_new_strv(devc->model->trigger_sources, devc->model->num_trigger_sources);
 		break;
 	case SR_CONF_TRIGGER_SLOPE:
 		*data = g_variant_new_strv(ARRAY_AND_SIZE(trigger_slopes));
 		break;
-	// case SR_CONF_DATA_SOURCE:
-	// 	if (!devc)
-	// 		/* Can't know this until we have the exact model. */
-	// 		return SR_ERR_ARG;
-	// 	switch (devc->model->series->protocol) {
-	// 	/* TODO: Check what must be done here for the data source buffer sizes. */
-	// 	case NON_SPO_MODEL:
-	// 		*data = g_variant_new_strv(data_sources, ARRAY_SIZE(data_sources) - 1);
-	// 		break;
-	// 	case SPO_MODEL:
-	// 	case ESERIES:
-	// 		*data = g_variant_new_strv(ARRAY_AND_SIZE(data_sources));
-	// 		break;
-	// 	}
-	// 	break;
+	case SR_CONF_DATA_SOURCE:
+		*data = g_variant_new_strv(ARRAY_AND_SIZE(data_sources));
+		break;
 	case SR_CONF_NUM_HDIV:
 		*data = g_variant_new_int32(TEK_NUM_HDIV);
 		break;
@@ -830,6 +834,7 @@ static int dev_acquisition_start(const struct sr_dev_inst *sdi)
 	struct dev_context *devc;
 	struct sr_channel *ch;
 	GSList *l;
+	char *response = NULL;
 
 	scpi = sdi->conn;
 	devc = sdi->priv;
@@ -855,26 +860,27 @@ static int dev_acquisition_start(const struct sr_dev_inst *sdi)
 	
 	tek_tds2000b_get_dev_cfg_horizontal(sdi);
 
-	if (tek_tds2000b_config_set(sdi, "ACQ:STATE RUN") != SR_OK)
+	if (sr_scpi_get_bool(scpi, "acq:state?", &devc->prior_state_running) != SR_OK)
 		return SR_ERR;
 
-	sr_scpi_source_add(sdi->session, scpi, G_IO_IN, 100,
+	if (sr_scpi_get_string(scpi, "acq:stopa?", &response) != SR_OK)
+		return SR_ERR;
+
+	devc->prior_state_single = (g_ascii_strncasecmp("sequence", response, 3) == 0);
+
+ 	// these models are slow, and TDS2xxxB takes ~1.5 seconds to begin transmitting, so poll slowly
+	sr_scpi_source_add(sdi->session, scpi, G_IO_IN, 1300,
 		tek_tds2000b_receive, (void *) sdi);
 
 	std_session_send_df_header(sdi);
 
 	devc->channel_entry = devc->enabled_channels;
 
-	sr_info("Doing initial start");
-
 	if (tek_tds2000b_capture_start(sdi) != SR_OK)
 		return SR_ERR;
 
-	sr_info("Marking fame begin");
 	/* Start of first frame. */
 	std_session_send_df_frame_begin(sdi);
-
-	sr_info("Marking done");
 
 	return SR_OK;
 }
@@ -897,8 +903,10 @@ static int dev_acquisition_stop(struct sr_dev_inst *sdi)
 }
 
 static struct sr_dev_driver tektronix_tds2000b_driver_info = {
-	.name = "tektronix-tds2000b",
-	.longname = "Tektronix TDS2000B",
+	// the protocol isn't really called this, but it's the
+	// best way I can think to conver all the scopes supported
+	.name = "tektronix-ocp2k5",
+	.longname = "Tektronix Oscilloscope Control Protocol 2k5",
 	.api_version = 1,
 	.init = std_init,
 	.cleanup = std_cleanup,
