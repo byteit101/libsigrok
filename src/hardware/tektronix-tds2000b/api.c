@@ -39,10 +39,10 @@ static const uint32_t drvopts[] = {SR_CONF_OSCILLOSCOPE};
 /**
  * TODOS
  *
+ * "properly" parse block arg
+ * Test compensation
  * General cleanup
  * current options?
- * validate command applicability
- * "properly" parse block arg
  */
 
 static const uint32_t devopts[] = {
@@ -362,7 +362,7 @@ static struct sr_dev_inst *probe_device(struct sr_scpi_dev_inst *scpi)
 	}
 
 	if (!device) {
-		sr_dbg("Found Tektronix device not supported by the tds2000b driver: %s",
+		sr_dbg("Found Tektronix device not supported by the ocp2k5 driver: %s",
 			hw_info->model);
 		goto error;
 	}
@@ -418,6 +418,7 @@ static int dev_open(struct sr_dev_inst *sdi)
 {
 	int ret;
 	struct sr_scpi_dev_inst *scpi = sdi->conn;
+	struct dev_context *devc = sdi->priv;
 
 	if ((ret = sr_scpi_open(scpi)) < 0) {
 		sr_err("Failed to open SCPI device: %s.", sr_strerror(ret));
@@ -428,6 +429,11 @@ static int dev_open(struct sr_dev_inst *sdi)
 		sr_err("Failed to get device config: %s.", sr_strerror(ret));
 		return SR_ERR;
 	}
+
+	sr_info(
+		"Opened Tektronix device '%s' with %d channels, %dMHz bandwidth, and %dMSa/s",
+		devc->model->model, devc->model->channels, devc->model->bandwidth,
+		devc->model->sample_rate);
 
 	return SR_OK;
 }
@@ -595,7 +601,6 @@ static int config_set(uint32_t key, GVariant *data,
 	int i;
 	int ret, idx;
 	const char *tmp_str;
-	char buffer[16];
 	char cmd4[4];
 	gboolean b;
 
@@ -630,7 +635,7 @@ static int config_set(uint32_t key, GVariant *data,
 		devc->horiz_triggerpos = t_dbl;
 		/* We have the trigger offset as a percentage of the frame, but
 		 * need to express this in seconds. */
-		t_dbl = -(devc->horiz_triggerpos - 0.5) * devc->timebase * (10);
+		t_dbl = -(devc->horiz_triggerpos - 0.5) * devc->timebase * TEK_NUM_HDIV;
 		return tektronix_ocp2k5_config_set(sdi, "hor:mai:pos %.3e", t_dbl);
 	case SR_CONF_TRIGGER_LEVEL:
 		if (!strcmp(devc->trigger_source, "AC Line"))
@@ -638,8 +643,7 @@ static int config_set(uint32_t key, GVariant *data,
 		return SR_ERR;
 
 		t_dbl = g_variant_get_double(data);
-		g_ascii_formatd(buffer, sizeof(buffer), "%.3f", t_dbl);
-		ret = tektronix_ocp2k5_config_set(sdi, "TRIG:MAI:LEV %s", buffer);
+		ret = tektronix_ocp2k5_config_set(sdi, "TRIG:MAI:LEV %.3e", t_dbl);
 		if (ret == SR_OK)
 			devc->trigger_level = t_dbl;
 		break;

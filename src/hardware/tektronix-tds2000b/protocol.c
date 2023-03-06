@@ -50,6 +50,8 @@ static const struct tek_enum_parser parse_table_yunits[] = {{YU_UNKNOWN, "U"},
 	// select models only:
 	{YU_AMPS, "A"}, {YU_AA, "AA"}, {YU_VA, "VA"}, {YU_VV, "VV"}, {0, NULL}};
 
+#define TEK_PRE_HEADER_FIELDS 16
+
 static int tektronix_ocp2k5_read_header(struct sr_dev_inst *sdi);
 
 /* Revert all settings, if requested. */
@@ -129,7 +131,7 @@ SR_PRIV int tektronix_ocp2k5_receive(int fd, int revents, void *cb_data)
 		devc->num_block_read = 0;
 
 		sr_dbg("Requesting: %d bytes.", TEK_BUFFER_SIZE + 1 + 1 + 1 + 4);
-		len = sr_scpi_read_data(scpi, (char *)devc->buffer, 6);
+		len = sr_scpi_read_data(scpi, (char *)devc->buffer, 6); // TODO: fix
 		if (len == -1) {
 			sr_err("Read error, aborting capture.");
 			std_session_send_df_frame_end(sdi);
@@ -149,6 +151,7 @@ SR_PRIV int tektronix_ocp2k5_receive(int fd, int revents, void *cb_data)
 		sr_dbg("Received block: %d bytes.", len);
 		devc->num_block_read = len;
 
+		// ensure the terminating newline is read
 		while (devc->num_block_read < TEK_BUFFER_SIZE + 1) {
 			sr_dbg("Requesting: %d bytes.",
 				TEK_BUFFER_SIZE + 1 - devc->num_block_read);
@@ -368,7 +371,6 @@ static int parse_scpi_enum(const char *data,
 	const struct tek_enum_parser *parser_table, int *out_err, int default_value)
 {
 	while (parser_table->name) {
-		// TODO: check if really case insensitive
 		if (g_ascii_strcasecmp(parser_table->name, data) == 0) {
 			return parser_table->enum_value;
 		}
@@ -396,7 +398,7 @@ static int tektronix_ocp2k5_parse_header(struct sr_dev_inst *sdi, char *end_buf)
 	struct sr_scpi_dev_inst *scpi = sdi->conn;
 	struct dev_context *devc = sdi->priv;
 	char *buf = (char *)devc->buffer;
-	char *fields[17]; // one extra for block ()
+	char *fields[TEK_PRE_HEADER_FIELDS + 1]; // one extra for block
 	int i = 0;
 	int ret = SR_OK;
 	int pt_off;
@@ -473,6 +475,8 @@ static int tektronix_ocp2k5_parse_header(struct sr_dev_inst *sdi, char *end_buf)
 	// int blocklength = parse_scpi_blockstart(fields[i++], &ret);
 
 	sr_dbg("Expected 16 values, parsed %d in header with ret=%i", i, ret);
+	if (i != TEK_PRE_HEADER_FIELDS && ret == SR_OK)
+		ret = SR_ERR;
 
 	// expensive, so avoid
 	if (sr_log_loglevel_get() >= SR_LOG_SPEW)
@@ -510,7 +514,7 @@ static int tektronix_ocp2k5_read_header(struct sr_dev_inst *sdi)
 	// Find all 16 fields by locating their semicolons.
 	// In theory the string values could contain semicolons to throw us off
 	// but I think we are safe based on the docs
-	while (found < 16) {
+	while (found < TEK_PRE_HEADER_FIELDS) {
 		/* Read header from device. */
 		ret = sr_scpi_read_data(scpi, buf, attempt);
 		if (ret < attempt) {
@@ -523,7 +527,7 @@ static int tektronix_ocp2k5_read_header(struct sr_dev_inst *sdi)
 				found++;
 			}
 		}
-		attempt = 16 - found;
+		attempt = TEK_PRE_HEADER_FIELDS - found;
 		if (attempt > 1)
 			attempt *= 2;
 	}
@@ -605,11 +609,6 @@ SR_PRIV int tektronix_ocp2k5_get_dev_cfg(const struct sr_dev_inst *sdi)
 	sr_dbg("Current analog channel state:");
 	for (i = 0; i < devc->model->channels; i++)
 		sr_dbg("CH%d %s", i + 1, devc->analog_channels[i] ? "On" : "Off");
-
-	/* Timebase. */
-	if (sr_scpi_get_float(sdi->conn, "hor:del:sca?", &devc->timebase) != SR_OK)
-		return SR_ERR;
-	sr_dbg("Current timebase: %g.", devc->timebase);
 
 	/* Probe attenuation. */
 	for (i = 0; i < devc->model->channels; i++) {
@@ -708,7 +707,9 @@ SR_PRIV int tektronix_ocp2k5_get_dev_cfg_horizontal(const struct sr_dev_inst *sd
 	/* Get the timebase. */
 	if (sr_scpi_get_float(sdi->conn, "hor:sca?", &devc->timebase) != SR_OK)
 		return SR_ERR;
+	sr_dbg("Current timebase: %g.", devc->timebase);
 
+	/* Get the record size. A sanity check as it should be 2500 */
 	if (sr_scpi_get_int(sdi->conn, "hor:reco?", &memory_depth) != SR_OK)
 		return SR_ERR;
 
@@ -718,7 +719,6 @@ SR_PRIV int tektronix_ocp2k5_get_dev_cfg_horizontal(const struct sr_dev_inst *sd
 		return SR_ERR;
 	}
 
-	sr_dbg("Current timebase: %g.", devc->timebase);
 	fvalue = TEK_BUFFER_SIZE / (devc->timebase * (float)TEK_NUM_HDIV);
 	if (devc->model->sample_rate * 1000000.0 < fvalue)
 		sr_dbg("Current samplerate: %i MSa/s (limited by device).",
