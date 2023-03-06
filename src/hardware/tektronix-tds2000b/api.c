@@ -870,7 +870,8 @@ static int dev_acquisition_start(const struct sr_dev_inst *sdi)
 	devc->prior_state_single = (g_ascii_strncasecmp("sequence", response, 3) == 0);
 
  	// these models are slow, and TDS2xxxB takes ~1.5 seconds to begin transmitting, so poll slowly
-	sr_scpi_source_add(sdi->session, scpi, G_IO_IN, 1300,
+	// However, not too slow, as that makes some weird transmission timeouts appear
+	sr_scpi_source_add(sdi->session, scpi, G_IO_IN, 500,
 		tektronix_ocp2k5_receive, (void *) sdi);
 
 	std_session_send_df_header(sdi);
