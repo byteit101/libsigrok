@@ -28,7 +28,8 @@
 #define LOG_PREFIX "tektronix-ocp2k5"
 
 /* Mostly for general information, but also used for debug messages */
-enum bandwidth {
+enum bandwidth
+{
 	BW_25MHz = 25,
 	BW_30MHz = 30,
 	BW_40MHz = 40,
@@ -41,20 +42,22 @@ enum bandwidth {
 	BW_200MHz = 200,
 };
 
-enum samplerate {
+enum samplerate
+{
 	SA_500M = 500,
 	SA_1G = 1000,
 	SA_2G = 2000,
 };
 
-/* Describes model-specific features. See DEVICE_SPEC() macro in api.c for the "constructor" */
+/* Describes model-specific features. See DEVICE_SPEC() macro in api.c for the
+ * "constructor" */
 struct device_spec {
 	const char *model;
 	int channels;
-	
+
 	enum samplerate sample_rate;
 	enum bandwidth bandwidth;
-	
+
 	const uint64_t *probe_factors;
 	int num_probe_factors;
 
@@ -64,7 +67,7 @@ struct device_spec {
 	int voltrange_start;
 	int voltrange_stop;
 
-	const char** trigger_sources;
+	const char **trigger_sources;
 	int num_trigger_sources;
 };
 
@@ -78,38 +81,44 @@ struct device_spec {
 
 /* Wave data information */
 
-enum TEK_DATA_ENCODING {
+enum TEK_DATA_ENCODING
+{
 	ENC_ASCII,
 	ENC_BINARY
 };
 
-enum TEK_DATA_FORMAT {
+enum TEK_DATA_FORMAT
+{
 	FMT_RI,
 	FMT_RP
 };
 
-enum TEK_DATA_ORDERING {
+enum TEK_DATA_ORDERING
+{
 	ORDER_LSB,
 	ORDER_MSB
 };
 
-enum TEK_POINT_FORMAT {
+enum TEK_POINT_FORMAT
+{
 	PT_FMT_ENV,
 	PT_FMT_Y
 };
 
-enum TEK_X_UNITS {
+enum TEK_X_UNITS
+{
 	XU_SECOND,
 	XU_HZ
 };
 
-enum TEK_Y_UNITS {
+enum TEK_Y_UNITS
+{
 	YU_UNKNOWN,
 	YU_UNKNOWN_MASK,
 	YU_VOLTS,
 	YU_DECIBELS,
 
-	// TBS1000B/EDU, TBS1000, TDS2000C, TDS1000C-EDU, TDS2000B, 
+	// TBS1000B/EDU, TBS1000, TDS2000C, TDS1000C-EDU, TDS2000B,
 	// TDS1000B, TPS2000B, and TPS2000 Series only:
 	YU_AMPS,
 	YU_VV,
@@ -118,12 +127,13 @@ enum TEK_Y_UNITS {
 };
 
 struct most_recent_wave_preamble {
-	//Xn = XZEro + XINcr (n - PT_OFf)
+	// Xn = XZEro + XINcr (n - PT_OFf)
 	float x_zero; // (in xunis)
 	float x_incr; // seconds per point or herts per point
 	enum TEK_X_UNITS x_unit;
 
-	//value_in_YUNits = ((curve_in_dl - YOFF_in_dl) * YMUlt) + YZERO_in_YUNits
+	// value_in_YUNits = ((curve_in_dl - YOFF_in_dl) * YMUlt) +
+	// YZERO_in_YUNits
 	float y_mult; // (in yunits)
 	float y_off; // (in digitizer levels)
 	float y_zero; // (in yunits)
@@ -132,14 +142,16 @@ struct most_recent_wave_preamble {
 	int num_pts;
 };
 
-enum DRIVER_CAPTURE_MODE {
+enum DRIVER_CAPTURE_MODE
+{
 	CAPTURE_LIVE, // reset trigger, re-enable at end
 	CAPTURE_ONE_SHOT, // reset trigger, no clear
 	CAPTURE_DISPLAY, // no reset, re-enable at end
 	CAPTURE_MEMORY, // no reset, no clear
 };
 
-enum wait_events {
+enum wait_events
+{
 	WAIT_CAPTURE,
 	WAIT_CHANNEL,
 	WAIT_DONE,
@@ -164,7 +176,7 @@ struct dev_context {
 	char *trigger_slope;
 	float trigger_level;
 
-	/* Current & configured acquisition settings*/
+	/* Current & configured acquisition settings */
 	gboolean average_enabled;
 	int average_samples;
 	gboolean peak_enabled;
@@ -181,13 +193,14 @@ struct dev_context {
 	GSList *enabled_channels;
 	GSList *channel_entry;
 
-	/* Acq buffers used for reading from the scope and sending data to app. */
+	/* Acq buffers used for reading from the scope and sending data to app.
+	 */
 	unsigned char *buffer;
 	int num_block_read;
 };
 
-SR_PRIV int tektronix_ocp2k5_config_set(const struct sr_dev_inst *sdi,
-	const char *format, ...);
+SR_PRIV int tektronix_ocp2k5_config_set(
+	const struct sr_dev_inst *sdi, const char *format, ...);
 SR_PRIV int tektronix_ocp2k5_capture_start(const struct sr_dev_inst *sdi);
 SR_PRIV int tektronix_ocp2k5_channel_start(const struct sr_dev_inst *sdi);
 SR_PRIV int tektronix_ocp2k5_capture_finish(const struct sr_dev_inst *sdi);
@@ -195,6 +208,5 @@ SR_PRIV int tektronix_ocp2k5_receive(int fd, int revents, void *cb_data);
 SR_PRIV int tektronix_ocp2k5_get_dev_cfg(const struct sr_dev_inst *sdi);
 SR_PRIV int tektronix_ocp2k5_get_dev_cfg_vertical(const struct sr_dev_inst *sdi);
 SR_PRIV int tektronix_ocp2k5_get_dev_cfg_horizontal(const struct sr_dev_inst *sdi);
-
 
 #endif
