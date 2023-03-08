@@ -276,15 +276,10 @@ static const struct device_spec device_models[] = {
 	// TBS B-series
 	DEVICE_SPEC("TBS 1032B",     2, 500M,  30MHz, new, 10n_50s, 2m_5V, T_S_Remainder),
 	DEVICE_SPEC("TBS 1052B",     2,   1G,  50MHz, new, 5ns_50s, 2m_5V, T_S_Remainder),
-	DEVICE_SPEC("TBS 1052B-EDU", 2,   1G,  50MHz, new, 5ns_50s, 2m_5V, T_S_Remainder),
 	DEVICE_SPEC("TBS 1072B",     2,   1G,  70MHz, new, 5ns_50s, 2m_5V, T_S_Remainder),
-	DEVICE_SPEC("TBS 1072B-EDU", 2,   1G,  70MHz, new, 5ns_50s, 2m_5V, T_S_Remainder),
 	DEVICE_SPEC("TBS 1102B",     2,   2G, 100MHz, new, 2n5_50s, 2m_5V, T_S_Remainder),
-	DEVICE_SPEC("TBS 1102B-EDU", 2,   2G, 100MHz, new, 2n5_50s, 2m_5V, T_S_Remainder),
 	DEVICE_SPEC("TBS 1152B",     2,   2G, 150MHz, new, 2n5_50s, 2m_5V, T_S_Remainder),
-	DEVICE_SPEC("TBS 1152B-EDU", 2,   2G, 150MHz, new, 2n5_50s, 2m_5V, T_S_Remainder),
 	DEVICE_SPEC("TBS 1202B",     2,   2G, 200MHz, new, 2n5_50s, 2m_5V, T_S_Remainder),
-	DEVICE_SPEC("TBS 1202B-EDU", 2,   2G, 200MHz, new, 2n5_50s, 2m_5V, T_S_Remainder),
 
 	// TDS 200-series, only supports 5ns-5s/div
 	DEVICE_SPEC("TDS 210", 2, 1G , 60MHz, old, 5ns_5s, 2m_5V, T_S_Remainder),
@@ -316,9 +311,9 @@ static const struct device_spec device_models[] = {
 	DEVICE_SPEC("TDS 2024B", 4, 2G, 200MHz, new, 2n5_50s, 2m_5V, T_S_Remainder),
 
 	// TDS C-series
-	DEVICE_SPEC("TDS 1001C-EDU", 2, 500M,  40MHz, new, 5ns_50s, 2m_5V, T_S_Remainder), // TODO: verify that the edu strings are correct
-	DEVICE_SPEC("TDS 1002C-EDU", 2,   1G,  60MHz, new, 5ns_50s, 2m_5V, T_S_Remainder),
-	DEVICE_SPEC("TDS 1012C-EDU", 2,   1G, 100MHz, new, 5ns_50s, 2m_5V, T_S_Remainder),
+	DEVICE_SPEC("TDS 1001C", 2, 500M,  40MHz, new, 5ns_50s, 2m_5V, T_S_Remainder),
+	DEVICE_SPEC("TDS 1002C", 2,   1G,  60MHz, new, 5ns_50s, 2m_5V, T_S_Remainder),
+	DEVICE_SPEC("TDS 1012C", 2,   1G, 100MHz, new, 5ns_50s, 2m_5V, T_S_Remainder),
 
 	DEVICE_SPEC("TDS 2001C", 2, 500M,  50MHz, new, 5ns_50s, 2m_5V, T_S_Remainder),
 	DEVICE_SPEC("TDS 2002C", 2,   1G,  70MHz, new, 5ns_50s, 2m_5V, T_S_Remainder),
