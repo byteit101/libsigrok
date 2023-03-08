@@ -175,8 +175,7 @@ static const char *coupling[] = {
 
 // validated in doc page 74/2-53
 static const uint64_t probe_factor_new[] = {1, 10, 20, 50, 100, 500, 1000};
-// TODO: check that  tds2000, tds1000  use this set
-// tds200, tds2000, tds1000 ?
+// tds200, tds2000, tds1000
 static const uint64_t probe_factor_old[] = {1, 10, 100, 1000};
 
 
@@ -254,7 +253,7 @@ static const char *trigger_sources_models_TPS_2k[] = {
  * [x] TBS1000: https://download.tek.com/manual/TBS1000-Oscilloscope-User-Manual_077076001.pdf
  * [x] TDS2000C/TDS1000C-EDU: https://download.tek.com/manual/TDS2000C-and-TDS1000C-EDU-Oscilloscope-User-Manual-EN_077082600.pdf
  * [x] TDS2000B/TDS1000B: https://download.tek.com/manual/071181702web.pdf
- * [ ] TDS2000/TDS1000: https://www.tek.com/en/oscilloscope/tds1002-manual/tds1000-and-tds2000-series-user-manual is password protected
+ * [x] TDS2000/TDS1000: https://download.tek.com/manual/TDS2000_TDS1000_User_071106400_Revision_A.pdf
  * [x] TDS200: https://download.tek.com/manual/071039803.pdf
  * [x] TPS2000B:https://download.tek.com/manual/TPS2000B-Digital-Oscilloscope-User-Manual-077137901.pdf
  * [x] TPS2000: https://download.tek.com/manual/071144105web.pdf
@@ -287,16 +286,14 @@ static const struct device_spec device_models[] = {
 	DEVICE_SPEC("TDS 224", 4, 1G, 100MHz, old, 5ns_5s, 2m_5V, TDS224),
 
 	// TDS original-series
-	DEVICE_SPEC("TDS 1001", 2, 1G, 100MHz, old, 5ns_50s, 2m_5V, T_S_Remainder),
-	DEVICE_SPEC("TDS 1002", 2, 1G, 100MHz, old, 5ns_50s, 2m_5V, T_S_Remainder), // TODO: docs missing
+	DEVICE_SPEC("TDS 1002", 2, 1G,  60MHz, old, 5ns_50s, 2m_5V, T_S_Remainder),
 	DEVICE_SPEC("TDS 1012", 2, 1G, 100MHz, old, 5ns_50s, 2m_5V, T_S_Remainder),
 
-	DEVICE_SPEC("TDS 2002", 2, 1G, 100MHz, old, 5ns_50s, 2m_5V, T_S_Remainder),
-	DEVICE_SPEC("TDS 2004", 4, 1G, 100MHz, old, 5ns_50s, 2m_5V, T_S_Remainder),
-	DEVICE_SPEC("TDS 2012", 2, 1G, 100MHz, old, 5ns_50s, 2m_5V, T_S_Remainder), // TODO: docs missing
+	DEVICE_SPEC("TDS 2002", 2, 1G,  60MHz, old, 5ns_50s, 2m_5V, T_S_Remainder),
+	DEVICE_SPEC("TDS 2012", 2, 1G, 100MHz, old, 5ns_50s, 2m_5V, T_S_Remainder),
 	DEVICE_SPEC("TDS 2014", 4, 1G, 100MHz, old, 5ns_50s, 2m_5V, T_S_Remainder),
-	DEVICE_SPEC("TDS 2022", 2, 1G, 100MHz, old, 5ns_50s, 2m_5V, T_S_Remainder),
-	DEVICE_SPEC("TDS 2024", 4, 1G, 100MHz, old, 5ns_50s, 2m_5V, T_S_Remainder),
+	DEVICE_SPEC("TDS 2022", 2, 2G, 200MHz, old, 2n5_50s, 2m_5V, T_S_Remainder),
+	DEVICE_SPEC("TDS 2024", 4, 2G, 200MHz, old, 2n5_50s, 2m_5V, T_S_Remainder),
 
 	// TDS B-series
 	DEVICE_SPEC("TDS 1001B", 2, 500M,  40MHz, new, 5ns_50s, 2m_5V, T_S_Remainder),
