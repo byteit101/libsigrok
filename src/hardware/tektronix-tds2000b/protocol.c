@@ -425,6 +425,27 @@ err:
 	return -1;
 }
 
+
+static void check_expected_value(
+	const char* name, int actual, int expected, int* out_err, 
+	const struct tek_enum_parser *parser_table)
+{
+	if (actual != expected) {
+		*out_err = SR_ERR_DATA;
+		if (parser_table == NULL)
+			sr_err(
+				"Error validating data header. Field '%s' expected %d, but found %d",
+				name, expected, actual);
+		else {
+			sr_err(
+				"Error validating data header. Field '%s' expected %s, but found %s",
+				name,
+				render_scpi_enum(expected, parser_table, out_err),
+				render_scpi_enum(actual, parser_table, out_err));
+		}
+	}
+}
+
 static int tektronix_ocp2k5_parse_header(struct sr_dev_inst *sdi, char *end_buf)
 {
 	struct sr_scpi_dev_inst *scpi = sdi->conn;
@@ -481,7 +502,6 @@ static int tektronix_ocp2k5_parse_header(struct sr_dev_inst *sdi, char *end_buf)
 	*/
 
 	i = 0;
-	// TODO: assert a few of these values
 	byte_width = parse_scpi_int(fields[i++], &ret, 1);
 	bit_width = parse_scpi_int(fields[i++], &ret, 8);
 	encoding = parse_scpi_enum(
@@ -495,8 +515,7 @@ static int tektronix_ocp2k5_parse_header(struct sr_dev_inst *sdi, char *end_buf)
 	pt_format = parse_scpi_enum(
 		fields[i++], parse_table_point_format, &ret, PT_FMT_Y);
 	devc->wavepre.x_incr = parse_scpi_float(fields[i++], &ret, 1);
-	pt_off = parse_scpi_int(fields[i++], &ret, 0); // always zero, parsed
-	                                               // only for completeness
+	pt_off = parse_scpi_int(fields[i++], &ret, 0);
 	devc->wavepre.x_zero = parse_scpi_float(fields[i++], &ret, 0);
 	devc->wavepre.x_unit = parse_scpi_enum(sr_scpi_unquote_string(fields[i++]),
 		parse_table_xunits, &ret, XU_SECOND);
@@ -528,6 +547,19 @@ static int tektronix_ocp2k5_parse_header(struct sr_dev_inst *sdi, char *end_buf)
 			render_scpi_enum(devc->wavepre.y_unit,
 				parse_table_yunits, &ret),
 			blocklength);
+	
+	// check that settings weren't tampered with
+	check_expected_value("byte width", byte_width, 1, &ret, NULL);
+	check_expected_value("bit size", bit_width, 8, &ret, NULL);
+	check_expected_value("data encoding", encoding, ENC_BINARY, &ret, parse_table_data_encoding);
+	check_expected_value("data format", format, FMT_RI, &ret, parse_table_data_format);
+	check_expected_value("data encoding", ordering, ORDER_MSB, &ret, parse_table_data_ordering);
+	check_expected_value("number of points", devc->wavepre.num_pts, TEK_BUFFER_SIZE, &ret, NULL);
+	// this value is ENV when in peak detect mode
+	check_expected_value("point format", pt_format, PT_FMT_Y, &ret, parse_table_point_format);
+
+	check_expected_value("point offset", pt_off, 0, &ret, NULL);
+	check_expected_value("block length", blocklength, TEK_BUFFER_SIZE, &ret, NULL);
 	return ret;
 }
 
@@ -782,6 +814,7 @@ SR_PRIV int tektronix_ocp2k5_get_dev_cfg_horizontal(const struct sr_dev_inst *sd
 			devc->model->sample_rate);
 	else
 		sr_dbg("Current samplerate: %ld Sa/s.", (long)fvalue);
+
 	// TODO: peak detect mode is half of this
 	sr_dbg("Current memory depth: %d.", TEK_BUFFER_SIZE);
 	return SR_OK;

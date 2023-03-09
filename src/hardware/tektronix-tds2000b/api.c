@@ -25,23 +25,35 @@
 #include "protocol.h"
 #include "scpi.h"
 
-static struct sr_dev_driver tektronix_ocp2k5_driver_info;
-
 /**
  * Documentation for the SCPI commands can be found in
  * https://download.tek.com/manual/TBS1000-B-EDU-TDS2000-B-C-TDS1000-B-C-EDU-TDS200-TPS2000-B-Programmer-077044403_RevB.pdf
  * and is referred to as "doc page $PDF_PAGE/$PRINTED_PAGE"
  */
 
+
+/**
+ * Missing semi-important features:
+ *   bandwidth limiting ch<x>:bandwidth
+ *   chanel invert ch<x>:invert
+ *   volt/amp configuration ch:<x>:yunit
+ *   pulse triggering
+ *   ext trigger coupling
+ *   peak-detect mode (data retreival)
+ * 
+ * Missing less important features:
+ *   capture/savefiles
+ *   screenshots
+ *   fine adjust of vdivs
+ *   video triggering
+ */
+
+
+static struct sr_dev_driver tektronix_ocp2k5_driver_info;
+
 static const uint32_t scanopts[] = {SR_CONF_CONN, SR_CONF_SERIALCOMM};
 
 static const uint32_t drvopts[] = {SR_CONF_OSCILLOSCOPE};
-/**
- * TODOS
- *
- * General cleanup
- * current options?
- */
 
 static const uint32_t devopts[] = {
 	SR_CONF_TIMEBASE | SR_CONF_GET | SR_CONF_SET | SR_CONF_LIST,
@@ -58,21 +70,7 @@ static const uint32_t devopts[] = {
 	SR_CONF_BUFFERSIZE | SR_CONF_GET,
 	SR_CONF_DATA_SOURCE | SR_CONF_GET | SR_CONF_SET | SR_CONF_LIST,
 	SR_CONF_PEAK_DETECTION | SR_CONF_GET | SR_CONF_SET,
-
-	// capturefile or session file?
-
-	// SR_CONF_LIMIT_SAMPLES? (could be here or per-channel, but
-        // realistically, 2.5k samples isn't going to overwhelm anyone)
-
-		// TODO: voltage threshold?
 };
-
-/**
- * Missing semi-important features:
- * bandwidth limiting ch<x>:bandwidth
- * chanel invert ch<x>:invert
- * volt/amp configuration ch:<x>:yunit
- */
 
 static const uint32_t devopts_cg_analog[] = {
 	SR_CONF_NUM_VDIV | SR_CONF_GET,
@@ -80,15 +78,12 @@ static const uint32_t devopts_cg_analog[] = {
 	SR_CONF_COUPLING | SR_CONF_GET | SR_CONF_SET | SR_CONF_LIST,
 	SR_CONF_PROBE_FACTOR | SR_CONF_GET | SR_CONF_SET | SR_CONF_LIST,
 	SR_CONF_ENABLED | SR_CONF_GET | SR_CONF_SET,
-
-	// Is SR_CONF_CHANNEL_CONFIG how "advanced" features are supported?
 };
 
-// TODO: Compensation adjusts the vdivs, and I implemented a semi-proper
-// configuration of that, but it  wasn't ideal, so for now
-// all possible compensation vdivs are present
+// TODO: Compensation adjusts the vdivs, but PulseView doesn't pick up
+// any such dynamic changes, nor does it seem to support fine-adjust,
+// so for now all possible compensation vdivs are present
 
-// TODO: allow fine adjust
 // validated in doc page 75/2-57
 static const uint64_t vdivs[][2] = {
 	/* millivolts */
@@ -118,7 +113,7 @@ static const uint64_t vdivs[][2] = {
 	{5000, 1},
 };
 
-// everyone uses the same voltrange
+// everyone uses the same voltrange, only modified by compensation ranges (also the same)
 #define VOLTRANGE_2m_5V 0, 0
 
 static const uint64_t timebases[][2] = {
@@ -165,7 +160,6 @@ static const uint64_t timebases[][2] = {
 #define TIMEBASE_10n_50s 2, 0
 #define TIMEBASE_5ns_5s  1, 3
 
-// TODO: edge trigger has other options
 // validated in doc page 71/2-53
 static const char *coupling[] = {
 	"AC",
@@ -175,24 +169,8 @@ static const char *coupling[] = {
 
 // validated in doc page 74/2-53
 static const uint64_t probe_factor_new[] = {1, 10, 20, 50, 100, 500, 1000};
-// tds200, tds2000, tds1000
+// Only for tds200, tds2000, tds1000
 static const uint64_t probe_factor_old[] = {1, 10, 100, 1000};
-
-
-// TODO: current probe factor FIXME: 0.2x current probes are supported but this
-// is an int setting
-
-// {5,1,.5,.2,.1,.02,.01,.001} tbs1000B/EDU,
-// {5,1,.5,.2,.1,.02,.01,.001} tbs1000,
-// {5,1,.5,.2,.1,.02,.01,.001} tds2000c,
-// {5,1,.5,.2,.1,.02,.01,.001} tds1000C-edu,
-// {5,1,.5,.2,.1,.02,.01,.001} tds2000b,
-// {5,1,.5,.2,.1,.02,.01,.001} tds1000B,
-
-// {5,1,.2,.1,.05.02,.01,.001} tps2000/B
-// N/A tds200
-// tds2000
-// tds1000 ?
 
 static const char *trigger_slopes[] = {
 	"r",
@@ -247,18 +225,19 @@ static const char *trigger_sources_models_TPS_2k[] = {
 			4 + channels                                           \
 	}
 
-/* The doc is for:
+/* This table was generated from the documentation:
  *
- * [x] TBS1000B/EDU: https://download.tek.com/manual/TBS1000B-User-Manual-077088602-RevA.pdf
- * [x] TBS1000: https://download.tek.com/manual/TBS1000-Oscilloscope-User-Manual_077076001.pdf
- * [x] TDS2000C/TDS1000C-EDU: https://download.tek.com/manual/TDS2000C-and-TDS1000C-EDU-Oscilloscope-User-Manual-EN_077082600.pdf
- * [x] TDS2000B/TDS1000B: https://download.tek.com/manual/071181702web.pdf
- * [x] TDS2000/TDS1000: https://download.tek.com/manual/TDS2000_TDS1000_User_071106400_Revision_A.pdf
- * [x] TDS200: https://download.tek.com/manual/071039803.pdf
- * [x] TPS2000B:https://download.tek.com/manual/TPS2000B-Digital-Oscilloscope-User-Manual-077137901.pdf
- * [x] TPS2000: https://download.tek.com/manual/071144105web.pdf
+ * TBS1000B/EDU: https://download.tek.com/manual/TBS1000B-User-Manual-077088602-RevA.pdf
+ * TBS1000: https://download.tek.com/manual/TBS1000-Oscilloscope-User-Manual_077076001.pdf
+ * TDS2000C/TDS1000C-EDU: https://download.tek.com/manual/TDS2000C-and-TDS1000C-EDU-Oscilloscope-User-Manual-EN_077082600.pdf
+ * TDS2000B/TDS1000B: https://download.tek.com/manual/071181702web.pdf
+ * TDS2000/TDS1000: https://download.tek.com/manual/TDS2000_TDS1000_User_071106400_Revision_A.pdf
+ * TDS200: https://download.tek.com/manual/071039803.pdf
+ * TPS2000B:https://download.tek.com/manual/TPS2000B-Digital-Oscilloscope-User-Manual-077137901.pdf
+ * TPS2000: https://download.tek.com/manual/071144105web.pdf
  *
  * All specs can be found in Appendix A's of the linked pdfs
+ * EDU series are badge-only, and respond as if they are non-EDU products
  */
 static const struct device_spec device_models[] = {
 
@@ -690,7 +669,7 @@ static int config_set(uint32_t key, GVariant *data,
 			tmp_str = "EXT10";
 		else
 			tmp_str = (char *)devc->trigger_source;
-		// TODO: pulse and video
+		// Note: pulse and video triggering isn't set here
 		return tektronix_ocp2k5_config_set(
 			sdi, "TRIG:mai:edge:sou %s", tmp_str);
 	case SR_CONF_VDIV:
