@@ -650,7 +650,7 @@ src_libdrivers_la_SOURCES += \
 	src/hardware/sysclk-sla5032/protocol.c \
 	src/hardware/sysclk-sla5032/api.c
 endif
-if HW_TEKTRONIX_OCP2k5
+if HW_TEKTRONIX_OCP2K5
 src_libdrivers_la_SOURCES += \
 	src/hardware/tektronix-ocp2k5/protocol.h \
 	src/hardware/tektronix-ocp2k5/protocol.c \
