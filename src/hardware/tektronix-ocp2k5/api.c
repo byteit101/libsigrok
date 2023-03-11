@@ -873,6 +873,10 @@ static int dev_acquisition_start(const struct sr_dev_inst *sdi)
 	if (!devc->enabled_channels)
 		return SR_ERR;
 
+	// Set view to main, but don't check the status as TBS1000B doesn't
+	// support this command. This ensures the timebase is correct
+	tektronix_ocp2k5_config_set(sdi, "hor:view mai");
+
 	tektronix_ocp2k5_get_dev_cfg_horizontal(sdi);
 
 	if (sr_scpi_get_bool(scpi, "acq:state?", &devc->prior_state_running) != SR_OK)
